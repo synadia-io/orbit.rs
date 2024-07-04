@@ -1,0 +1,7 @@
+[package]
+name = "core-extras"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-nats = "0.35.1"
