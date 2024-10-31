@@ -34,7 +34,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
-
       - name: Generate go.sum # go.sum is required by caching on the next step
         run: touch go.sum
       - name: Set up Go
@@ -229,7 +228,6 @@ jobs:
         # Update openssl-sys to not depend on the stale libssl-dev package.
         run: |
           cargo +nightly update -Zminimal-versions
-          cargo +nightly update -p openssl-sys -p openssl
 
       - name: Install stable
         id:   install-stable-rust
