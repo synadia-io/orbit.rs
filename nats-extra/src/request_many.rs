@@ -31,9 +31,11 @@ impl RequestManyExt for Client {
     }
 }
 
+type SentinelPredicate = Option<Box<dyn Fn(&async_nats::Message) -> bool + 'static>>;
+
 pub struct RequestMany {
     client: Client,
-    sentinel: Option<Box<dyn Fn(&async_nats::Message) -> bool + 'static>>,
+    sentinel: SentinelPredicate,
     max_wait: Option<Duration>,
     stall_wait: Option<Duration>,
     max_messags: Option<usize>,
@@ -102,7 +104,7 @@ pub struct Responses {
     messages_received: usize,
     timer: Option<Pin<Box<tokio::time::Sleep>>>,
     stall: Option<Pin<Box<tokio::time::Sleep>>>,
-    sentinel: Option<Box<dyn Fn(&async_nats::Message) -> bool + 'static>>,
+    sentinel: SentinelPredicate,
     max_messages: Option<usize>,
     stall_wait: Option<Duration>,
 }
@@ -156,7 +158,7 @@ impl Stream for Responses {
                             if sentinel(&message) {
                                 Poll::Ready(None)
                             } else {
-                                return Poll::Ready(Some(message));
+                                Poll::Ready(Some(message))
                             }
                         }
                         None => Poll::Ready(Some(message)),
