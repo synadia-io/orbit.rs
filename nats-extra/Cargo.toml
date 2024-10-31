@@ -2,6 +2,7 @@
 name = "nats-extra"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
 
 [dependencies]
 async-nats = { git = "https://github.com/nats-io/nats.rs", package = "async-nats", branch = "main" }
