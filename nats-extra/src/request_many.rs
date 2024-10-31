@@ -11,6 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Request many pattern implementation useful for streaming responses
+//! and scatter-gather pattern.
+
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -21,6 +24,8 @@ use async_nats::{subject::ToSubject, Client, RequestError, Subscriber};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 
+/// Extension trait for [async-nats Client](async_nats::Client) that enables the
+/// [client.request_many()](RequestManyExt::request_many), which allows for streaming responses and scatter-gather patterns.
 pub trait RequestManyExt {
     fn request_many(&self) -> RequestMany;
 }
@@ -31,8 +36,10 @@ impl RequestManyExt for Client {
     }
 }
 
+/// Predicate function that can be used to pick responses termination.
 type SentinelPredicate = Option<Box<dyn Fn(&async_nats::Message) -> bool + 'static>>;
 
+/// A builder for the request many pattern.
 pub struct RequestMany {
     client: Client,
     sentinel: SentinelPredicate,
@@ -52,26 +59,34 @@ impl RequestMany {
         }
     }
 
+    /// Set the sentinel predicate that will be used to terminate the responses.
     pub fn sentinel(mut self, sentinel: impl Fn(&async_nats::Message) -> bool + 'static) -> Self {
         self.sentinel = Some(Box::new(sentinel));
         self
     }
 
+    /// Set the maximum time between messages before the responses are terminated.
+    /// Useful when the number of responses is not known upfront. Can also work in scatter-gather
+    /// where sentinel or setting max messages would not work.
     pub fn stall_wait(mut self, stall_wait: Duration) -> Self {
         self.stall_wait = Some(stall_wait);
         self
     }
 
+    /// Set the maximum number of messages to receive before the responses are terminated.
     pub fn max_messages(mut self, max_messages: usize) -> Self {
         self.max_messags = Some(max_messages);
         self
     }
 
+    /// Set the maximum time to wait for responses before terminating.
+    /// By default, the client's request timeout is used.
     pub fn max_wait(mut self, max_wait: Option<Duration>) -> Self {
         self.max_wait = max_wait;
         self
     }
 
+    /// Send a request to the subject and return a stream of responses.
     pub async fn send<S: ToSubject>(
         self,
         subject: S,
@@ -99,6 +114,7 @@ impl RequestMany {
     }
 }
 
+/// A stream of responses from a request many pattern.
 pub struct Responses {
     responses: Subscriber,
     messages_received: usize,

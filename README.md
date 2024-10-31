@@ -13,4 +13,4 @@ This is a list of the current utilities.
 
 | Module | Description                                   | Docs                        |
 | ------ | --------------------------------------------- | --------------------------- |
-| core extras   | Set of useful tools for Core NATS | [README.md](core-extras/README.md) |
+| nats extra   | Set of useful tools for Core NATS | [README.md](nats-extra/README.md) |

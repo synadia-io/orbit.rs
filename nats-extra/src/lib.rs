@@ -18,4 +18,5 @@
 #![deny(rustdoc::invalid_rust_codeblocks)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
+#[cfg(feature = "request_many")]
 pub mod request_many;

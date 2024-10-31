@@ -10,3 +10,7 @@ bytes = "1.8.0"
 futures = "0.3.31"
 tokio = { version = "1.0", features = ["time"] }
 nats_server = { git = "https://github.com/nats-io/nats.rs", package = "nats-server" }
+
+[features]
+request_many = []
+default = ["request_many"]
