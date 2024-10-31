@@ -1,0 +1,246 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  RUSTFLAGS: "-D warnings"
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test_matrix:
+    name: test (${{ matrix.os }} / stable)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go-bin: ['~/go/bin']
+        include:
+          - os: windows-latest
+            go-bin: 'c:/Users/runneradmin/go/bin'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Generate go.sum # go.sum is required by caching on the next step
+        run: touch go.sum
+      - name: Set up Go
+        id:   setup-go
+        uses: actions/setup-go@v4 # v4 uses caching out of the box
+        with:
+          go-version: '1.22'
+      - name: Install nats-server
+        run:  go install github.com/nats-io/nats-server/v2@main
+      - name: Install stable Rust on ${{ matrix.os }}
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache the build artifacts
+        uses: Swatinem/rust-cache@v2 # caches dependencies only, not the whole ./target.
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
+          # Cache the dependencies if they are built successfully even when tests fail.
+          cache-on-failure: true
+      - name: Build all packages
+        id:   build-packages
+        run:  cargo build --all --all-targets
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          cargo test --features=${{ matrix.features }} -- --nocapture
+
+  check_format:
+    name: check format (ubuntu-latest / nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Install nightly Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - name: Run the check
+        run: cargo fmt -- --check
+
+  check_lint:
+    name: check linter (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Install stable Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy # to reuse the cache
+      - name: Restore cached build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
+          save-if: false # the linter only run checks but not builds, so we don't have the full build to be cached.
+
+      - name: Run linter
+        run: cargo clippy --benches --tests --examples --all-features --workspace --exclude nats -- --deny clippy::all
+
+  check_docs:
+    name: check docs (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Install stable Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore cached build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
+          save-if: false # we only build docs, so we don't have the full build to be cached.
+
+      - name: Check lint
+        run: cargo doc --no-deps --all-features
+
+  check_features:
+    name: check feature flags (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Install stable Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore cached build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
+          save-if: false # we only build docs, so we don't have the full build to be cached.
+      - name: Install cargo hack
+        run: cargo install cargo-hack
+      - name: Check lint
+        run: cargo hack check -p nats-extra
+
+  check_licenses:
+    name: check licenses (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Run cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check
+          command-arguments: licenses
+
+  check_msrv:
+    name: check minimal supported rust version (ubuntu-latest / msrv)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Install msrv Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@1.79.0
+      - name: Cache the build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
+          # The cache for the msrv won't contain a full packages' builds (we only run check).
+          # We still cache these partial builds because they aren't reused by the other jobs.
+
+      - name: Check all packages
+        run: |
+          set -eo pipefail
+          cargo +${{ steps.install-rust.outputs.name }} check
+
+  check_examples:
+    name: check examples (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Install stable Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore cached build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
+          save-if: false # we are only checking examples, so we don't have the full build to be cached.
+
+      - name: Run the check
+        env:
+          RUST_LOG: trace
+        run: cargo check --examples
+
+  check_spelling:
+    name: check spelling (ubuntu-latest / nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Install llvm-config
+        run: sudo apt-get install -y libclang-dev
+
+      - name: Install nightly Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Cache cargo-spellcheck
+        id:  cache-cargo-spellcheck
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin/cargo-spellcheck
+          key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-cargo-spellcheck
+      - name: Install cargo-spellcheck
+        if: steps.cache-cargo-spellcheck.outputs.cache-hit != 'true'
+        run: cargo install cargo-spellcheck
+
+      - name: Check spelling
+        run: cargo spellcheck --code 1
+
+  check_min_versions:
+    name: check minimal versions of transitive dependencies (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install nightly for -Zminimal-versions
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Lock minimal versions
+        # Update openssl-sys to not depend on the stale libssl-dev package.
+        run: |
+          cargo +nightly update -Zminimal-versions
+          cargo +nightly update -p openssl-sys -p openssl
+
+      - name: Install stable
+        id:   install-stable-rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore cached build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-${{ steps.install-stable-rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
+      - name: Run the check
+        env:
+          RUST_BACKTRACE: 1
+        # cannot check against all packages because min versions of nats@0.16.0 are broken
+        run: cargo +${{ steps.install-stable-rust.outputs.name }} check  --locked --all-features --all-targets
+
