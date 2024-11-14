@@ -11,6 +11,14 @@ futures = "0.3.31"
 tokio = { version = "1.0", features = ["time"] }
 nats_server = { git = "https://github.com/nats-io/nats.rs", package = "nats-server" }
 
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+
 [features]
 request_many = []
 default = ["request_many"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
