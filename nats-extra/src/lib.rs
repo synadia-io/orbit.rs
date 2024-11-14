@@ -11,6 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! # Orbit.rs nats-extra
+//!
+//! This crate extends functionality for the [async-nats](https://docs.rs/async-nats)
+//! crate. It is more opinionated and versioned separately, allowing for more
+//! flexible API development.
+
 #![deny(unreachable_pub)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]

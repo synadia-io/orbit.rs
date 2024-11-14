@@ -13,6 +13,41 @@
 
 //! Request many pattern implementation useful for streaming responses
 //! and scatter-gather pattern.
+//!
+//! ## Examples
+//!
+//! ### Complete example
+//!
+//! Connect to NATS server, and extend the [async-nats::Client] with the request_many capabilities.
+//!
+//! ```no_run
+//! use async_nats::Client;
+//! // Extend the client with request_many.
+//! use nats_extra::request_many::RequestManyExt;
+//! use futures::StreamExt;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), async_nats::Error> {
+//!     let client = async_nats::connect("demo.nats.io").await?;
+//!
+//!     let mut requests = client.subscribe("requests").await?;
+//!
+//!     let mut responses = client
+//!         .request_many()
+//!         .send("requests", "payload".into())
+//!         .await?;
+//!
+//!     let request = requests.next().await.unwrap();
+//!     for _ in 0..100 {
+//!         client.publish(request.reply.clone().unwrap(), "data".into()).await?;
+//!     }
+//!
+//!     while let Some(message) = responses.next().await {
+//!         println!("Received: {:?}", message);
+//!     }
+//!     Ok(())
+//! }
+//!```
 
 use std::{
     pin::Pin,
@@ -40,6 +75,23 @@ impl RequestManyExt for Client {
 type SentinelPredicate = Option<Box<dyn Fn(&async_nats::Message) -> bool + 'static>>;
 
 /// A builder for the request many pattern.
+///
+/// # Examples
+/// ```no_run
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), async_nats::Error> {
+///     use nats_extra::request_many::RequestManyExt;
+///     let client = async_nats::connect("demo.nats.io").await?;
+///
+///     let responses = client
+///         .request_many()
+///         .max_messages(10)
+///         .send("subject", "payload".into())
+///         .await?;
+///
+/// # Ok(())
+/// # }
+/// ```
 pub struct RequestMany {
     client: Client,
     sentinel: SentinelPredicate,
@@ -60,6 +112,23 @@ impl RequestMany {
     }
 
     /// Set the sentinel predicate that will be used to terminate the responses.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), async_nats::Error> {
+    ///     use nats_extra::request_many::RequestManyExt;
+    ///     let client = async_nats::connect("demo.nats.io").await?;
+    ///
+    ///     let responses = client
+    ///         .request_many()
+    ///         .sentinel(|msg| msg.payload.is_empty())
+    ///         .send("subject", "payload".into())
+    ///         .await?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn sentinel(mut self, sentinel: impl Fn(&async_nats::Message) -> bool + 'static) -> Self {
         self.sentinel = Some(Box::new(sentinel));
         self
@@ -68,12 +137,46 @@ impl RequestMany {
     /// Set the maximum time between messages before the responses are terminated.
     /// Useful when the number of responses is not known upfront. Can also work in scatter-gather
     /// where sentinel or setting max messages would not work.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), async_nats::Error> {
+    ///     use nats_extra::request_many::RequestManyExt;
+    ///     let client = async_nats::connect("demo.nats.io").await?;
+    ///
+    ///     let responses = client
+    ///         .request_many()
+    ///         .stall_wait(std::time::Duration::from_millis(300))
+    ///         .send("subject", "payload".into())
+    ///         .await?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn stall_wait(mut self, stall_wait: Duration) -> Self {
         self.stall_wait = Some(stall_wait);
         self
     }
 
     /// Set the maximum number of messages to receive before the responses are terminated.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), async_nats::Error> {
+    ///     use nats_extra::request_many::RequestManyExt;
+    ///     let client = async_nats::connect("demo.nats.io").await?;
+    ///
+    ///     let responses = client
+    ///         .request_many()
+    ///         .max_messages(500)
+    ///         .send("subject", "payload".into())
+    ///         .await?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn max_messages(mut self, max_messages: usize) -> Self {
         self.max_messags = Some(max_messages);
         self
@@ -81,12 +184,46 @@ impl RequestMany {
 
     /// Set the maximum time to wait for responses before terminating.
     /// By default, the client's request timeout is used.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), async_nats::Error> {
+    ///     use nats_extra::request_many::RequestManyExt;
+    ///     let client = async_nats::connect("demo.nats.io").await?;
+    ///
+    ///     let responses = client
+    ///         .request_many()
+    ///         .max_wait(Some(std::time::Duration::from_secs(15)))
+    ///         .send("subject", "payload".into())
+    ///         .await?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn max_wait(mut self, max_wait: Option<Duration>) -> Self {
         self.max_wait = max_wait;
         self
     }
 
     /// Send a request to the subject and return a stream of responses.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), async_nats::Error> {
+    ///     use nats_extra::request_many::RequestManyExt;
+    ///     let client = async_nats::connect("demo.nats.io").await?;
+    ///
+    ///     let responses = client
+    ///         .request_many()
+    ///         .sentinel(|msg| msg.payload.is_empty())
+    ///         .send("subject", "payload".into())
+    ///         .await?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send<S: ToSubject>(
         self,
         subject: S,
