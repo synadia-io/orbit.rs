@@ -1,8 +1,15 @@
 [package]
 name = "nats-extra"
+authors = ["Tomasz Pietrek <tomasz@nats.io>"]
 version = "0.1.0"
 edition = "2021"
+description = "Set of utilities and extensions for the Core NATS of the async-nats crate"
 license = "Apache-2.0"
+documentation = "https://docs.rs/nats-extra"
+homepage = "https://github.com/synadia-io/orbit.rs"
+repository = "https://github.com/synadia-io/orbit.rs"
+keywords = ["nats", "extra", "extensions", "messaging", "api"]
+categories = ["network-programming", "api-bindings"]
 
 [dependencies]
 async-nats = { git = "https://github.com/nats-io/nats.rs", package = "async-nats", branch = "main" }
