@@ -16,10 +16,10 @@ async-nats = "0.38.0"
 bytes = "1.8.0"
 futures = "0.3.31"
 tokio = { version = "1.0", features = ["time"] }
-nats_server = { git = "https://github.com/nats-io/nats.rs", package = "nats-server" }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+nats_server = { git = "https://github.com/nats-io/nats.rs", package = "nats-server" }
 
 [features]
 request_many = []
