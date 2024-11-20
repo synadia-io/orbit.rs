@@ -11,6 +11,6 @@ not made until the specific project has a v1.0.0 version.
 
 This is a list of the current utilities.
 
-| Module | Description                                   | Docs                        |
-| ------ | --------------------------------------------- | --------------------------- |
-| nats extra   | Set of useful tools for Core NATS | [README.md](nats-extra/README.md) |
+| Module | Description                                   | Docs                        | Version |
+| ------ | --------------------------------------------- | --------------------------- | ------- |
+| nats extra   | Set of useful tools for Core NATS | [README.md](nats-extra/README.md) | [![Crates.io](https://img.shields.io/crates/v/nats-extra.svg)](https://crates.io/crates/nats-extra) |
