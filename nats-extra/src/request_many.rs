@@ -55,7 +55,7 @@ use std::{
     time::Duration,
 };
 
-use async_nats::{subject::ToSubject, Client, RequestError, Subscriber};
+use async_nats::{subject::ToSubject, Client, RequestError, StatusCode, Subscriber};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 
@@ -247,6 +247,7 @@ impl RequestMany {
             sentinel: self.sentinel,
             max_messages: self.max_messags,
             stall_wait: self.stall_wait,
+            reason: None,
         })
     }
 }
@@ -260,6 +261,23 @@ pub struct Responses {
     sentinel: SentinelPredicate,
     max_messages: Option<usize>,
     stall_wait: Option<Duration>,
+    reason: Option<TerminationReason>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminationReason {
+    MaxMessages,
+    MaxWait,
+    StallWait,
+    Sentinel,
+    NoResponders,
+    SubscriptionClosed,
+}
+
+impl Responses {
+    pub fn termination_reason(&self) -> Option<TerminationReason> {
+        self.reason.clone()
+    }
 }
 
 impl Stream for Responses {
@@ -270,6 +288,7 @@ impl Stream for Responses {
         if let Some(timer) = self.timer.as_mut() {
             match timer.poll_unpin(cx) {
                 Poll::Ready(_) => {
+                    self.reason = Some(TerminationReason::MaxWait);
                     return Poll::Ready(None);
                 }
                 Poll::Pending => {}
@@ -279,6 +298,7 @@ impl Stream for Responses {
         // max_messages
         if let Some(max_messages) = self.max_messages {
             if self.messages_received >= max_messages {
+                self.reason = Some(TerminationReason::MaxMessages);
                 return Poll::Ready(None);
             }
         }
@@ -291,6 +311,7 @@ impl Stream for Responses {
 
             match stall.as_mut().poll_unpin(cx) {
                 Poll::Ready(_) => {
+                    self.reason = Some(TerminationReason::StallWait);
                     return Poll::Ready(None);
                 }
                 Poll::Pending => {}
@@ -300,6 +321,12 @@ impl Stream for Responses {
         match self.responses.poll_next_unpin(cx) {
             Poll::Ready(message) => match message {
                 Some(message) => {
+                    // no responders
+                    if message.status == Some(StatusCode::NO_RESPONDERS) {
+                        self.reason = Some(TerminationReason::NoResponders);
+                        return Poll::Ready(None);
+                    }
+
                     self.messages_received += 1;
 
                     // reset timer
@@ -309,6 +336,7 @@ impl Stream for Responses {
                     match self.sentinel {
                         Some(ref sentinel) => {
                             if sentinel(&message) {
+                                self.reason = Some(TerminationReason::Sentinel);
                                 Poll::Ready(None)
                             } else {
                                 Poll::Ready(Some(message))
@@ -317,7 +345,10 @@ impl Stream for Responses {
                         None => Poll::Ready(Some(message)),
                     }
                 }
-                None => Poll::Ready(None),
+                None => {
+                    self.reason = Some(TerminationReason::SubscriptionClosed);
+                    Poll::Ready(None)
+                }
             },
             Poll::Pending => Poll::Pending,
         }

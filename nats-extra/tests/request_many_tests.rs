@@ -25,7 +25,7 @@ mod request_many {
 
         // request many with sentinel
         let mut requests = client.subscribe("test").await.unwrap();
-        let responses = client
+        let mut responses = client
             .request_many()
             .sentinel(|msg| msg.payload.is_empty())
             .send("test", "data".into())
@@ -45,12 +45,20 @@ mod request_many {
             .await
             .unwrap();
 
-        assert_eq!(responses.count().await, 100);
+        let mut count = 0;
+        while responses.next().await.is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 100);
+        assert_eq!(
+            responses.termination_reason(),
+            Some(nats_extra::request_many::TerminationReason::Sentinel)
+        );
         requests.unsubscribe().await.unwrap();
 
         // request many with max messages
         let mut requests = client.subscribe("test").await.unwrap();
-        let responses = client
+        let mut responses = client
             .request_many()
             .max_messages(20)
             .send("test", "data".into())
@@ -66,12 +74,21 @@ mod request_many {
                 .unwrap();
         }
 
-        assert_eq!(responses.count().await, 20);
+        let mut count = 0;
+        while responses.next().await.is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 20);
+        let termination = responses.termination_reason();
+        assert_eq!(
+            termination,
+            Some(nats_extra::request_many::TerminationReason::MaxMessages)
+        );
         requests.unsubscribe().await.unwrap();
 
         // request many with stall
         let mut requests = client.subscribe("test").await.unwrap();
-        let responses = client
+        let mut responses = client
             .request_many()
             .stall_wait(Duration::from_millis(100))
             .send("test", "data".into())
@@ -94,11 +111,19 @@ mod request_many {
                 requests.unsubscribe().await.unwrap();
             }
         });
-        assert_eq!(responses.count().await, 50);
+        let mut count = 0;
+        while responses.next().await.is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 50);
+        assert_eq!(
+            responses.termination_reason(),
+            Some(nats_extra::request_many::TerminationReason::StallWait)
+        );
 
         // request many with max wait
         let mut requests = client.subscribe("test").await.unwrap();
-        let responses = client
+        let mut responses = client
             .request_many()
             .max_wait(Some(Duration::from_secs(5)))
             .send("test", "data".into())
@@ -120,6 +145,31 @@ mod request_many {
                 }
             }
         });
-        assert_eq!(responses.count().await, 20);
+        let mut count = 0;
+        while responses.next().await.is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 20);
+        assert_eq!(
+            responses.termination_reason(),
+            Some(nats_extra::request_many::TerminationReason::MaxWait)
+        );
+
+        // no responders
+        let mut responses = client
+            .request_many()
+            .send("noone_listening", "data".into())
+            .await
+            .unwrap();
+
+        let mut count = 0;
+        while responses.next().await.is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 0);
+        assert_eq!(
+            responses.termination_reason(),
+            Some(nats_extra::request_many::TerminationReason::NoResponders)
+        );
     }
 }
