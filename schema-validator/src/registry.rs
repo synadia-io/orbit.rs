@@ -54,19 +54,17 @@ pub struct ListResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Schema {
-    name: String,
-    version: u32,
-    //FIXME(jrm): this should be a date, but either schema registry is sendind bad data,
-    // or the date format is not being parsed correctly.
-    time: String,
-    format: Format,
+    pub name: String,
+    pub version: u32,
+    pub time: String,
+    pub format: Format,
     #[serde(rename = "compat_policy")]
-    compatibility_policy: CompatibilityPolicy,
-    description: String,
-    metadata: HashMap<String, String>,
+    pub compatibility_policy: CompatibilityPolicy,
+    pub description: String,
+    pub metadata: HashMap<String, String>,
     #[serde(default)]
-    deleted: bool,
-    definition: String,
+    pub deleted: bool,
+    pub definition: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,12 +94,15 @@ impl Registry {
         Registry { client }
     }
 
+    // This should work when called multiple times.
     pub async fn add(&self, request: AddRequest) -> Result<AddResponse, AddError> {
         let request_bytes = serde_json::to_vec(&request).map(Bytes::from)?;
         let response = self
             .client
             .request(format!("$SR.v1.ADD.{}", request.name), request_bytes)
             .await?;
+
+        println!("Response: {:?}", response);
 
         let result = serde_json::from_slice(&response.payload)?;
         Ok(result)
@@ -176,7 +177,7 @@ impl Registry {
         let schema = schema.schema;
 
         let definition = schema.definition;
-        let definition = serde_json::to_value(definition)
+        let definition = serde_json::from_str(&definition)
             .map_err(|err| ValidateError::with_source(ValidateErrorKind::Other, err))?;
 
         match schema.format {
@@ -184,10 +185,9 @@ impl Registry {
                 let validator = jsonschema::draft202012::new(&definition).map_err(|err| {
                     ValidateError::with_source(ValidateErrorKind::InvalidSchema, err)
                 })?;
-                let value =
-                    serde_json::value::Value::try_from(payload.as_ref()).map_err(|err| {
-                        ValidateError::with_source(ValidateErrorKind::Deserialization, err)
-                    })?;
+                let value = serde_json::from_slice(payload.as_ref()).map_err(|err| {
+                    ValidateError::with_source(ValidateErrorKind::Deserialization, err)
+                })?;
 
                 validator.validate(&value).map_err(|err| {
                     ValidateError::with_source(ValidateErrorKind::ValidationFailed, err.to_string())
