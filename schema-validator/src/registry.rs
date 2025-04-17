@@ -1,8 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
-use async_nats::{self, ToServerAddrs};
+use async_nats::{self};
 use bytes::Bytes;
-use futures::task::waker;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::Error;
@@ -52,7 +51,7 @@ pub struct ListResponse {
     schemas: Vec<Schema>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Schema {
     pub name: String,
     pub version: u32,
@@ -67,7 +66,7 @@ pub struct Schema {
     pub definition: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Format {
     #[serde(rename = "jsonschema")]
     JsonSchema,
@@ -77,7 +76,7 @@ pub enum Format {
     Protobuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum CompatibilityPolicy {
     None,
     Backward,
@@ -87,11 +86,15 @@ pub enum CompatibilityPolicy {
 
 pub struct Registry {
     client: async_nats::Client,
+    cache: HashMap<(String, u32), Schema>,
 }
 
 impl Registry {
     pub fn new(client: async_nats::Client) -> Self {
-        Registry { client }
+        Registry {
+            client,
+            cache: HashMap::new(),
+        }
     }
 
     // This should work when called multiple times.
@@ -101,8 +104,6 @@ impl Registry {
             .client
             .request(format!("$SR.v1.ADD.{}", request.name), request_bytes)
             .await?;
-
-        println!("Response: {:?}", response);
 
         let result = serde_json::from_slice(&response.payload)?;
         Ok(result)
@@ -136,22 +137,25 @@ impl Registry {
     }
 
     pub async fn validate_message(
-        &self,
+        &mut self,
         message: async_nats::Message,
     ) -> Result<async_nats::Message, ValidateError> {
         let schema_name = message
             .headers
             .as_ref()
-            .unwrap()
-            .get("Nats-Schema-Name")
-            .unwrap();
+            .and_then(|h| h.get("Nats-Schema"))
+            .ok_or_else(|| ValidateError::new(ValidateErrorKind::MissingSchemaHeaders))?;
+
         let schema_version = message
             .headers
             .as_ref()
-            .unwrap()
-            .get("Nats-Schema-Version")
-            .unwrap();
-        let schema_version = schema_version.as_str().parse().unwrap();
+            .and_then(|h| h.get("Nats-Schema-Version"))
+            .ok_or_else(|| ValidateError::new(ValidateErrorKind::MissingSchemaHeaders))?;
+
+        let schema_version = schema_version
+            .as_str()
+            .parse()
+            .map_err(|_| ValidateError::new(ValidateErrorKind::MissingSchemaHeaders))?;
 
         self.validate(
             schema_name.as_str(),
@@ -163,18 +167,28 @@ impl Registry {
         Ok(message)
     }
 
+    pub async fn get_schema(&mut self, key: String, version: u32) -> Result<Schema, ValidateError> {
+        if let Some(schema) = self.cache.get(&(key.clone(), version)).cloned() {
+            println!("Cache hit for schema: {}", key);
+            return Ok(schema);
+        }
+
+        println!("Cache miss for schema: {}", key);
+        let schema = self.get(GetRequest { name: key, version }).await?;
+        self.cache.insert(
+            (schema.schema.name.clone(), schema.schema.version),
+            schema.schema.clone(),
+        );
+        Ok(schema.schema)
+    }
+
     pub async fn validate(
-        &self,
+        &mut self,
         schema: &str,
         version: u32,
         payload: Bytes,
     ) -> Result<(), ValidateError> {
-        let request = GetRequest {
-            name: schema.to_string(),
-            version,
-        };
-        let schema = self.get(request).await?;
-        let schema = schema.schema;
+        let schema = self.get_schema(schema.to_string(), version).await?;
 
         let definition = schema.definition;
         let definition = serde_json::from_str(&definition)
@@ -195,7 +209,7 @@ impl Registry {
 
                 return Ok(());
             }
-            _ => todo!(),
+            _ => unimplemented!("Only JSON Schema is supported"),
         }
     }
 }

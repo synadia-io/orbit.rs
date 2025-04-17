@@ -24,6 +24,7 @@
 #![deny(rustdoc::invalid_rust_codeblocks)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
+pub mod client_ext;
 pub mod errors;
 pub mod registry;
 pub mod validator;
