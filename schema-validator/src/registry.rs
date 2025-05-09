@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, str::from_utf8};
 
 use async_nats::{self};
 use bytes::Bytes;
@@ -25,6 +25,7 @@ pub struct AddResponse {
 #[derive(Debug, Serialize)]
 pub struct GetRequest {
     pub name: String,
+    // make it an string
     pub version: u32,
 }
 
@@ -105,8 +106,24 @@ impl Registry {
             .request(format!("$SR.v1.ADD.{}", request.name), request_bytes)
             .await?;
 
-        let result = serde_json::from_slice(&response.payload)?;
-        Ok(result)
+        if let Some(headers) = response.headers {
+            if let Some((code, message)) = headers_to_error(&headers) {
+                match code {
+                    11000 => return Err(AddError::new(AddErrorKind::InvalidName)),
+                    11001 => return Err(AddError::new(AddErrorKind::AlreadyExists)),
+                    11004 => return Err(AddError::new(AddErrorKind::FormatRequired)),
+                    11005 => return Err(AddError::new(AddErrorKind::InvalidDefinition)),
+                    _ => {
+                        return Err(AddError::with_source(
+                            AddErrorKind::Other,
+                            format!("{}: {}", code, message),
+                        ))
+                    }
+                }
+            }
+        }
+        serde_json::from_slice(&response.payload)
+            .map_err(|err| AddError::with_source(AddErrorKind::Other, err))
     }
 
     pub async fn get(&self, request: GetRequest) -> Result<GetResponse, GetError> {
@@ -169,11 +186,9 @@ impl Registry {
 
     pub async fn get_schema(&mut self, key: String, version: u32) -> Result<Schema, ValidateError> {
         if let Some(schema) = self.cache.get(&(key.clone(), version)).cloned() {
-            println!("Cache hit for schema: {}", key);
             return Ok(schema);
         }
 
-        println!("Cache miss for schema: {}", key);
         let schema = self.get(GetRequest { name: key, version }).await?;
         self.cache.insert(
             (schema.schema.name.clone(), schema.schema.version),
@@ -259,7 +274,11 @@ pub type AddError = Error<AddErrorKind>;
 pub enum AddErrorKind {
     SchemaRegistryNotFound,
     TimedOut,
+    AlreadyExists,
+    FormatRequired,
     Other,
+    InvalidName,
+    InvalidDefinition,
 }
 
 impl Display for AddErrorKind {
@@ -268,6 +287,10 @@ impl Display for AddErrorKind {
             AddErrorKind::SchemaRegistryNotFound => write!(f, "Schema registry not found"),
             AddErrorKind::TimedOut => write!(f, "Timed out"),
             AddErrorKind::Other => write!(f, "Other error"),
+            AddErrorKind::AlreadyExists => write!(f, "Schema already exists"),
+            AddErrorKind::FormatRequired => write!(f, "Format required"),
+            AddErrorKind::InvalidName => write!(f, "Invalid name"),
+            AddErrorKind::InvalidDefinition => write!(f, "Invalid definition"),
         }
     }
 }
@@ -282,6 +305,18 @@ impl From<async_nats::RequestError> for AddError {
             async_nats::RequestErrorKind::Other => AddError::with_source(AddErrorKind::Other, err),
         }
     }
+}
+
+fn headers_to_error(headers: &async_nats::header::HeaderMap) -> Option<(u32, String)> {
+    let code = headers
+        .get("Nats-Service-Error-Code")
+        .and_then(|h| h.as_str().parse().ok())?;
+
+    let message = headers
+        .get("Nats-Service-Error")
+        .map(|message| message.to_string())?;
+
+    Some((code, message))
 }
 
 impl From<serde_json::Error> for AddError {

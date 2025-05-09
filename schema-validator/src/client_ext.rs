@@ -10,7 +10,7 @@ use crate::registry::{Registry, ValidateError};
 #[async_trait]
 pub trait SchemaExt {
     async fn publish_with_schema<S: ToSubject + Send>(
-        self,
+        &self,
         subject: S,
         schema: &str,
         schema_version: u32,
@@ -23,7 +23,7 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 #[async_trait]
 impl SchemaExt for async_nats::Client {
     async fn publish_with_schema<S: ToSubject + Send>(
-        self,
+        &self,
         subject: S,
         schema: &str,
         schema_version: u32,

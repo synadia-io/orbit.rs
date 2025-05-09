@@ -11,9 +11,8 @@ mod registry {
 
     #[tokio::test]
     async fn schema_roundtrip() {
-        // let server = nats_server::run_server("tests/configs/jetstream.conf");
+        // Create a NATS connection.
         let nc = async_nats::connect("localhost:4222").await.unwrap();
-
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
         // A fixture to have some schema in the registry.
@@ -21,6 +20,7 @@ mod registry {
             .await
             .unwrap();
 
+        // Create a new registry.
         let registry = registry::Registry::new(nc.clone());
         // Add the schema to the registry.
         registry
@@ -33,17 +33,20 @@ mod registry {
                 metadata: HashMap::new(),
             })
             .await
-            .unwrap();
+            .ok();
 
+        println!("Schema added to registry");
+
+        // Create a new subscription to the subject.
         let sub = nc
             .subscribe("subject.>")
             .await
             .unwrap()
             .validated(Arc::new(tokio::sync::Mutex::new(registry)))
-            .take(1);
-
+            .take(2);
         pin_mut!(sub);
 
+        // Prepare the payloads.
         let payload = json!({
             "firstName": "John",
             "lastName": "Doe",
@@ -58,33 +61,26 @@ mod registry {
         });
         let bad_data = bytes::Bytes::from(serde_json::to_vec(&bad_payload).unwrap());
 
-        // Publish a message with payload that does not match the schema.
-        // nc.publish("subject.bad", bad_data).await.unwrap();
-
         // Publish a message with payload that matches the schema.
         nc.publish_with_schema("subject.schema", "schema", 1, data)
             .await
             .unwrap();
 
+        // Publish a message with payload that does not match the schema.
+        nc.publish_with_schema("subject.bad", "schema", 1, bad_data)
+            .await
+            .unwrap();
+        println!("Messages published\n");
+
         while let Some(message) = sub.next().await {
-            print!("Message: {:?}", message);
+            match message {
+                Ok(msg) => {
+                    println!("Received message: {:#?}\n", msg);
+                }
+                Err(err) => {
+                    println!("Error: {:?}\n", err);
+                }
+            }
         }
-
-        while let Some(message) = sub.try_next().await.unwrap() {
-            // For messages that have a proper schema, assert that the schema is valid.
-            print!("Message: {:?}", message);
-        }
-
-        // while let Some(message) = sub.next().await {
-        //     // For messages that have a proper schema, assert that the schema is valid.
-        //     if message.subject.as_ref() == "subject.good"
-        //         || message.subject.as_ref() == "subject.schema"
-        //     {
-        //         registry.validate_message(message).await.unwrap();
-        //     // Otherwise, assert error.
-        //     } else {
-        //         registry.validate_message(message).await.unwrap_err();
-        //     }
-        // }
     }
 }
