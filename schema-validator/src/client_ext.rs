@@ -32,6 +32,14 @@ impl SchemaExt for async_nats::Client {
         let mut headers = async_nats::header::HeaderMap::new();
         headers.insert("Nats-Schema", schema);
         headers.insert("Nats-Schema-Version", schema_version.to_string());
+        
+        println!("  Headers:");
+        for (key, values) in headers.iter() {
+            for value in values {
+                println!("    {}: {}", key, value);
+            }
+        }
+        
         self.publish_with_headers(subject, headers, data).await?;
         Ok(())
     }

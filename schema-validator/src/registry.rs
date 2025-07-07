@@ -48,6 +48,7 @@ pub struct ListRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ListResponse {
+    #[allow(dead_code)]
     schemas: Vec<Schema>,
 }
 
@@ -55,12 +56,15 @@ pub struct ListResponse {
 pub struct Schema {
     pub name: String,
     pub version: u32,
+    #[serde(default)]
+    pub revision: Option<u32>,
     pub time: String,
     pub format: Format,
     #[serde(rename = "compat_policy")]
     pub compatibility_policy: CompatibilityPolicy,
     pub description: String,
-    pub metadata: HashMap<String, String>,
+    #[serde(default)]
+    pub metadata: Option<HashMap<String, String>>,
     #[serde(default)]
     pub deleted: bool,
     pub definition: String,
@@ -78,15 +82,19 @@ pub enum Format {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum CompatibilityPolicy {
+    #[serde(rename = "none")]
     None,
+    #[serde(rename = "backward")]
     Backward,
+    #[serde(rename = "forward")]
     Forward,
+    #[serde(rename = "full")]
     Full,
 }
 
 pub struct Registry {
     client: async_nats::Client,
-    cache: HashMap<(String, u32), Schema>,
+    cache: HashMap<String, Schema>,
 }
 
 impl Registry {
@@ -111,10 +119,24 @@ impl Registry {
 
     pub async fn get(&self, request: GetRequest) -> Result<GetResponse, GetError> {
         let request_bytes = serde_json::to_vec(&request).map(Bytes::from)?;
+        let subject = format!("$SR.v1.GET.{}", request.name);
+        
+        println!("Sending NATS request to subject: {}", subject);
+        println!("Request payload: {}", String::from_utf8_lossy(&request_bytes));
+        
         let response = self
             .client
-            .request(format!("$SR.v1.GET.{}", request.name), request_bytes)
+            .request(subject, request_bytes)
             .await?;
+            
+        let response_text = String::from_utf8_lossy(&response.payload);
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            println!("Received response payload:");
+            println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| response_text.to_string()));
+        } else {
+            println!("Received response payload: {}", response_text);
+        }
+        
         let result = serde_json::from_slice(&response.payload)?;
         Ok(result)
     }
@@ -140,26 +162,14 @@ impl Registry {
         &mut self,
         message: async_nats::Message,
     ) -> Result<async_nats::Message, ValidateError> {
-        let schema_name = message
+        let schema_id = message
             .headers
             .as_ref()
             .and_then(|h| h.get("Nats-Schema"))
             .ok_or_else(|| ValidateError::new(ValidateErrorKind::MissingSchemaHeaders))?;
 
-        let schema_version = message
-            .headers
-            .as_ref()
-            .and_then(|h| h.get("Nats-Schema-Version"))
-            .ok_or_else(|| ValidateError::new(ValidateErrorKind::MissingSchemaHeaders))?;
-
-        let schema_version = schema_version
-            .as_str()
-            .parse()
-            .map_err(|_| ValidateError::new(ValidateErrorKind::MissingSchemaHeaders))?;
-
         self.validate(
-            schema_name.as_str(),
-            schema_version,
+            schema_id.as_str(),
             message.payload.clone(),
         )
         .await?;
@@ -167,16 +177,22 @@ impl Registry {
         Ok(message)
     }
 
-    pub async fn get_schema(&mut self, key: String, version: u32) -> Result<Schema, ValidateError> {
-        if let Some(schema) = self.cache.get(&(key.clone(), version)).cloned() {
-            println!("Cache hit for schema: {}", key);
+    pub async fn get_schema(&mut self, schema_id: String) -> Result<Schema, ValidateError> {
+        if let Some(schema) = self.cache.get(&schema_id).cloned() {
+            println!("Cache hit for schema: {}", schema_id);
             return Ok(schema);
         }
 
-        println!("Cache miss for schema: {}", key);
-        let schema = self.get(GetRequest { name: key, version }).await?;
+        println!("Cache miss for schema: {}", schema_id);
+        println!("Requesting schema from registry={}", schema_id);
+        
+        let schema = self.get(GetRequest { name: schema_id.clone(), version: 1 }).await
+            .map_err(|e| {
+                println!("Failed to get schema '{}' from registry: {:?}", schema_id, e);
+                e
+            })?;
         self.cache.insert(
-            (schema.schema.name.clone(), schema.schema.version),
+            schema_id.clone(),
             schema.schema.clone(),
         );
         Ok(schema.schema)
@@ -184,11 +200,10 @@ impl Registry {
 
     pub async fn validate(
         &mut self,
-        schema: &str,
-        version: u32,
+        schema_id: &str,
         payload: Bytes,
     ) -> Result<(), ValidateError> {
-        let schema = self.get_schema(schema.to_string(), version).await?;
+        let schema = self.get_schema(schema_id.to_string()).await?;
 
         let definition = schema.definition;
         let definition = serde_json::from_str(&definition)

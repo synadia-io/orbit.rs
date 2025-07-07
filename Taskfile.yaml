@@ -1,0 +1,26 @@
+version: '3'
+
+vars:
+  X: "cargo run --bin schema-test --"
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list-all
+  sub:
+    summary: |
+      Subscribe, example:
+      
+      task sub -- --schema-id jsonschema.1.2.Demo -s localhost:14222 -c ./nats.creds
+    cmds:
+      - "{{.X}} {{.CLI_ARGS}} subscribe"
+  pub:
+    summary: |
+      Publish, example:
+      
+      task pub -- -s localhost:14222 -c ./nats.creds --schema-id jsonschema.1.2.Demo --payload ./valid.json
+      task pub -- -s localhost:14222 -c ./nats.creds --schema-id jsonschema.1.2.Demo --payload ./invalid.json
+      task pub -- -s localhost:14222 -c ./nats.creds --schema-id jsonschema.1.2.Demo --payload '{"firstName": "foo", "lastName": "bar", "age": -30}'
+    cmds:
+      - "{{.X}} {{.CLI_ARGS}} publish"
