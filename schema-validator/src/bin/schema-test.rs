@@ -38,6 +38,10 @@ struct Cli {
     #[arg(long)]
     payload: Option<String>,
 
+    /// Validate payload before publishing
+    #[arg(long)]
+    validate: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -75,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Publish => {
-            run_publisher(client, cli.subject, cli.schema_id, cli.count, cli.payload).await?;
+            run_publisher(client, cli.subject, cli.schema_id, cli.count, cli.payload, cli.validate).await?;
         }
         Commands::Subscribe => {
             run_subscriber(client, cli.subject, cli.schema_id, cli.count).await?;
@@ -91,6 +95,7 @@ async fn run_publisher(
     schema_id: String,
     count: usize,
     payload: Option<String>,
+    validate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing {} messages to subject: {}", count, subject);
     println!("Using schema ID: {}", schema_id);
@@ -119,13 +124,23 @@ async fn run_publisher(
         })
     };
 
+    // Pre-validate payload if requested
+    if validate {
+        println!("Validating payload before publishing...");
+        let mut registry = Registry::new(client.clone());
+        let payload_bytes = Bytes::from(serde_json::to_vec(&payload_data)?);
+        
+        match registry.validate(&full_schema_id, payload_bytes).await {
+            Ok(_) => println!("✅ Payload validation passed"),
+            Err(e) => {
+                println!("❌ Payload validation failed: {}", e);
+                return Err(Box::new(e));
+            }
+        }
+    }
+
     for i in 0..count {
         let payload = Bytes::from(serde_json::to_vec(&payload_data)?);
-        
-        // println!("Publishing message {}: {}", i + 1, serde_json::to_string(&payload_data)?);
-        // println!("  Subject: {}", subject);
-        // println!("  Schema ID: {}", full_schema_id);
-        // println!("  Schema Version: {}", schema_version);
         
         match client.clone().publish_with_schema(
             subject.clone(),
