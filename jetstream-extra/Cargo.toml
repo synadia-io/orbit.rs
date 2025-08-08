@@ -12,10 +12,9 @@ keywords = ["nats", "extra", "extensions", "messaging", "api"]
 categories = ["network-programming", "api-bindings"]
 
 [dependencies]
-async-nats = "0.38.0"
+async-nats = { git = "https://github.com/nats-io/nats.rs", package = "async-nats", branch = "main" }
 bytes = "1.8.0"
 futures = "0.3.31"
-thiserror = "1.0"
 tokio = { version = "1.0", features = ["time", "sync"] }
 
 [dev-dependencies]

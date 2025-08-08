@@ -13,14 +13,13 @@
 
 use async_nats::jetstream;
 use futures::future::join_all;
-use jetstream_extra::publisher::{Publisher, PublishMode};
+use jetstream_extra::publisher::{PublishMode, Publisher};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to NATS
     let client = async_nats::connect("localhost:4222").await?;
     let jetstream = jetstream::new(client);
-    
+
     // Ensure stream exists
     let _ = jetstream
         .create_stream(jetstream::stream::Config {
@@ -29,44 +28,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         })
         .await;
-    
-    // Create a publisher with max 10 in-flight messages
+
     let publisher = Publisher::builder(jetstream)
         .max_in_flight(10)
-        .mode(PublishMode::WaitForPermit)
+        .mode(PublishMode::Backpressure)
         .build();
-    
-    // Publish messages concurrently
+
     let mut futures = Vec::new();
-    
+
     for i in 0..50 {
         let publisher = publisher.clone();
         let future = tokio::spawn(async move {
             let ack_future = publisher
                 .publish(format!("events.{}", i % 5), format!("Message {}", i).into())
                 .await?;
-                
+
             // The semaphore permit is held until we await the ack
             let ack = ack_future.await?;
-            println!("Published message {} to stream {} with sequence {}", 
-                     i, ack.stream, ack.sequence);
-            
+            println!(
+                "Published message {} to stream {} with sequence {}",
+                i, ack.stream, ack.sequence
+            );
+
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
         });
-        
+
         futures.push(future);
     }
-    
+
     // Wait for all publishes to complete
     let results = join_all(futures).await;
-    
+
     for (i, result) in results.iter().enumerate() {
         if let Err(e) = result {
             eprintln!("Task {} failed: {}", i, e);
         }
     }
-    
+
     println!("All messages published successfully!");
-    
+
     Ok(())
 }
