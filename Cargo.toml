@@ -2,7 +2,7 @@
 
 resolver = "2"
 
-members = [
+members = [ "jetstream-extra",
     "nats-extra",
 ]
 
