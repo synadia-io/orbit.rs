@@ -2,7 +2,7 @@
 mod registry {
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-    use futures::{pin_mut, StreamExt, TryStreamExt};
+    use futures::{pin_mut, StreamExt};
     use schema_validator::{
         client_ext::{SchemaExt, ValidateStreamExt},
         registry::{self, AddRequest, Format},

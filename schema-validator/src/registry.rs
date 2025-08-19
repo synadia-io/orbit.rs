@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, str::from_utf8};
+use std::{collections::HashMap, fmt::Display};
 
 use async_nats::{self};
 use bytes::Bytes;
