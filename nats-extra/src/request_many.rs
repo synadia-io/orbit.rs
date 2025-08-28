@@ -56,9 +56,9 @@ use std::{
 };
 
 use async_nats::{
+    RequestError, StatusCode,
     client::traits::{Publisher, Subscriber, TimeoutProvider},
     subject::ToSubject,
-    RequestError, StatusCode,
 };
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
@@ -316,12 +316,12 @@ where
             }
         }
 
-        // max_messages
-        if let Some(max_messages) = self.max_messages {
-            if self.messages_received >= max_messages {
-                self.reason = Some(TerminationReason::MaxMessages);
-                return Poll::Ready(None);
-            }
+        // max_messages.
+        if let Some(max_messages) = self.max_messages
+            && self.messages_received >= max_messages
+        {
+            self.reason = Some(TerminationReason::MaxMessages);
+            return Poll::Ready(None);
         }
 
         // stall_wait
