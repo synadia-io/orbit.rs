@@ -10,8 +10,6 @@ allow = [
     "Unicode-3.0",
 ]
 
-default = "deny"
-
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
