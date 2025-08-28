@@ -2,7 +2,7 @@
 name = "nats-extra"
 authors = ["Tomasz Pietrek <tomasz@nats.io>"]
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 description = "Set of utilities and extensions for the Core NATS of the async-nats crate"
 license = "Apache-2.0"
 documentation = "https://docs.rs/nats-extra"
