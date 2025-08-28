@@ -55,22 +55,28 @@ use std::{
     time::Duration,
 };
 
-use async_nats::{subject::ToSubject, Client, RequestError, StatusCode, Subscriber};
+use async_nats::{
+    client::traits::{Publisher, Subscriber, TimeoutProvider},
+    subject::ToSubject,
+    RequestError, StatusCode,
+};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 
 /// Extension trait for [async-nats Client](async_nats::Client) that enables the
 /// [client.request_many()](RequestManyExt::request_many), which allows for streaming responses and scatter-gather patterns.
-pub trait RequestManyExt {
-    fn request_many(&self) -> RequestMany;
+pub trait RequestManyExt: TimeoutProvider + Publisher + Subscriber + Clone {
+    fn request_many(&self) -> RequestMany<Self>;
 }
 
-impl RequestManyExt for Client {
-    fn request_many(&self) -> RequestMany {
+impl<T> RequestManyExt for T
+where
+    T: TimeoutProvider + Publisher + Subscriber + Clone,
+{
+    fn request_many(&self) -> RequestMany<T> {
         RequestMany::new(self.clone(), self.timeout())
     }
 }
-
 /// Predicate function that can be used to pick responses termination.
 type SentinelPredicate = Option<Box<dyn Fn(&async_nats::Message) -> bool + 'static>>;
 
@@ -92,16 +98,22 @@ type SentinelPredicate = Option<Box<dyn Fn(&async_nats::Message) -> bool + 'stat
 /// # Ok(())
 /// # }
 /// ```
-pub struct RequestMany {
-    client: Client,
+pub struct RequestMany<T>
+where
+    T: TimeoutProvider + Publisher + Subscriber,
+{
+    client: T,
     sentinel: SentinelPredicate,
     max_wait: Option<Duration>,
     stall_wait: Option<Duration>,
     max_messags: Option<usize>,
 }
 
-impl RequestMany {
-    pub fn new(client: Client, max_wait: Option<Duration>) -> Self {
+impl<T> RequestMany<T>
+where
+    T: TimeoutProvider + Publisher + Subscriber + Clone,
+{
+    pub fn new(client: T, max_wait: Option<Duration>) -> Self {
         RequestMany {
             client,
             sentinel: None,
@@ -228,8 +240,8 @@ impl RequestMany {
         self,
         subject: S,
         payload: Bytes,
-    ) -> Result<Responses, RequestError> {
-        let response_subject = self.client.new_inbox();
+    ) -> Result<Responses<async_nats::Subscriber>, RequestError> {
+        let response_subject = nuid::next().to_string();
         let responses = self.client.subscribe(response_subject.clone()).await?;
         self.client
             .publish_with_reply(subject, response_subject, payload)
@@ -253,8 +265,11 @@ impl RequestMany {
 }
 
 /// A stream of responses from a request many pattern.
-pub struct Responses {
-    responses: Subscriber,
+pub struct Responses<S>
+where
+    S: Stream<Item = async_nats::Message> + Unpin,
+{
+    responses: S,
     messages_received: usize,
     timer: Option<Pin<Box<tokio::time::Sleep>>>,
     stall: Option<Pin<Box<tokio::time::Sleep>>>,
@@ -274,13 +289,19 @@ pub enum TerminationReason {
     SubscriptionClosed,
 }
 
-impl Responses {
+impl<S> Responses<S>
+where
+    S: Stream<Item = async_nats::Message> + Unpin,
+{
     pub fn termination_reason(&self) -> Option<TerminationReason> {
         self.reason.clone()
     }
 }
 
-impl Stream for Responses {
+impl<S> Stream for Responses<S>
+where
+    S: Stream<Item = async_nats::Message> + Unpin,
+{
     type Item = async_nats::Message;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
