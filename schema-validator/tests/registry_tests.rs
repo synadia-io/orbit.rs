@@ -1,3 +1,5 @@
+mod mock_helpers;
+
 #[cfg(test)]
 mod registry {
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -12,7 +14,10 @@ mod registry {
     #[tokio::test]
     async fn schema_roundtrip() {
         // Create a NATS connection.
-        let nc = async_nats::connect("localhost:4222").await.unwrap();
+        let server = nats_server::run_server("tests/configs/config_with_mapping.conf");
+        let nc = async_nats::connect(server.client_url()).await.unwrap();
+        let _ =
+            crate::mock_helpers::start_schema_registry(Some(server.client_url().as_str())).await;
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
         // A fixture to have some schema in the registry.

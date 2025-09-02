@@ -1,8 +1,8 @@
 use async_nats::{header::HeaderMap, Message};
 use bytes::Bytes;
-use schema_validator::registry::{Schema, Format, CompatibilityPolicy};
+use schema_validator::registry::{CompatibilityPolicy, Format, Schema};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 use std::process::{Child, Command};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -49,7 +49,7 @@ pub fn create_error_response(code: u32, message: &str) -> Message {
     let mut headers = HeaderMap::new();
     headers.insert("Nats-Service-Error-Code", code.to_string());
     headers.insert("Nats-Service-Error", message);
-    
+
     Message {
         subject: "test".into(),
         reply: None,
@@ -105,13 +105,35 @@ pub fn verify_add_subject(subject: &str, account: &str, name: &str) -> bool {
 }
 
 /// Verify that a subject matches the expected pattern for GET operation
-pub fn verify_get_subject(subject: &str, account: &str, format: &str, version: &str, revision: &str, name: &str) -> bool {
-    subject == format!("$SR.{}.v1.GET.{}.{}.{}.{}", account, format, version, revision, name)
+pub fn verify_get_subject(
+    subject: &str,
+    account: &str,
+    format: &str,
+    version: &str,
+    revision: &str,
+    name: &str,
+) -> bool {
+    subject
+        == format!(
+            "$SR.{}.v1.GET.{}.{}.{}.{}",
+            account, format, version, revision, name
+        )
 }
 
 /// Verify that a subject matches the expected pattern for UPDATE operation
-pub fn verify_update_subject(subject: &str, account: &str, format: &str, version: &str, revision: &str, name: &str) -> bool {
-    subject == format!("$SR.{}.v1.UPDATE.{}.{}.{}.{}", account, format, version, revision, name)
+pub fn verify_update_subject(
+    subject: &str,
+    account: &str,
+    format: &str,
+    version: &str,
+    revision: &str,
+    name: &str,
+) -> bool {
+    subject
+        == format!(
+            "$SR.{}.v1.UPDATE.{}.{}.{}.{}",
+            account, format, version, revision, name
+        )
 }
 
 /// Verify that a subject matches the expected pattern for LIST operation
@@ -122,23 +144,23 @@ pub fn verify_list_subject(subject: &str, account: &str) -> bool {
 /// Parse a subject to extract components for validation
 pub fn parse_subject(subject: &str) -> Result<SubjectComponents, String> {
     let parts: Vec<&str> = subject.split('.').collect();
-    
+
     if parts.len() < 4 {
         return Err("Invalid subject format".to_string());
     }
-    
+
     if parts[0] != "$SR" {
         return Err("Subject must start with $SR".to_string());
     }
-    
+
     let account = parts[1].to_string();
     let version_api = parts[2].to_string();
     let operation = parts[3].to_string();
-    
+
     if version_api != "v1" {
         return Err("Invalid API version".to_string());
     }
-    
+
     Ok(SubjectComponents {
         account,
         operation,
@@ -155,15 +177,9 @@ pub struct SubjectComponents {
 /// Handle for managing a schema registry process
 pub struct SchemaRegistryHandle {
     process: Option<Child>,
-    url: String,
 }
 
-impl SchemaRegistryHandle {
-    /// Get the URL of the running schema registry
-    pub fn url(&self) -> &str {
-        &self.url
-    }
-}
+impl SchemaRegistryHandle {}
 
 impl Drop for SchemaRegistryHandle {
     fn drop(&mut self) {
@@ -175,40 +191,33 @@ impl Drop for SchemaRegistryHandle {
 }
 
 /// Start a schema registry instance and return a handle to manage it
-/// 
+///
 /// # Arguments
 /// * `nats_url` - Optional NATS URL, defaults to "nats://localhost:4222"
 /// * `port` - Optional port, defaults to 8080
-pub async fn start_schema_registry(
-    nats_url: Option<&str>, 
-    port: Option<u16>
-) -> Result<SchemaRegistryHandle, String> {
+pub async fn start_schema_registry(nats_url: Option<&str>) -> Result<SchemaRegistryHandle, String> {
     let nats_url = nats_url.unwrap_or("nats://localhost:4222");
-    let port = port.unwrap_or(8080);
-    
+
     let mut command = Command::new("schema-registry");
     command
-        .arg("--nats")
+        .arg("server")
+        .arg("--server")
         .arg(nats_url)
-        .arg("--port")
-        .arg(port.to_string())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    
+
     let process = command
         .spawn()
         .map_err(|e| format!("Failed to start schema-registry: {}", e))?;
-    
+
     // Give the schema registry time to start up
     sleep(Duration::from_millis(500)).await;
-    
-    let url = format!("http://localhost:{}", port);
-    
+
     // Optionally verify it's running by checking if we can connect
     // For now, we'll just assume it started successfully after the delay
-    
+
     Ok(SchemaRegistryHandle {
         process: Some(process),
-        url,
     })
 }
+
