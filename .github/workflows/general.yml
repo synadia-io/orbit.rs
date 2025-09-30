@@ -1,0 +1,55 @@
+
+name: general
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  RUSTFLAGS: "-D warnings"
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check_licenses:
+    name: check licenses (ubuntu-latest / stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Run cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          command-arguments: licenses
+
+  check_spelling:
+    name: check spelling (ubuntu-latest / nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+      - name: Install llvm-config
+        run: sudo apt-get install -y libclang-dev
+
+      - name: Install nightly Rust on ubuntu-latest
+        id:   install-rust
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Cache cargo-spellcheck
+        id:  cache-cargo-spellcheck
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin/cargo-spellcheck
+          key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-cargo-spellcheck
+      - name: Install cargo-spellcheck
+        if: steps.cache-cargo-spellcheck.outputs.cache-hit != 'true'
+        run: cargo install cargo-spellcheck
+
+      - name: Check spelling
+        run: cargo spellcheck --code 1

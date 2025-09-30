@@ -1,4 +1,4 @@
-120
+130
 NATS
 JetStream
 jetstream
@@ -162,3 +162,17 @@ with_deleted
 StreamInfoBuilder
 request_many
 versioned
+async
+deserialize
+Vec
+batch_publish
+BatchPublish
+BatchPublishBuilder
+BatchPublishAllBuilder
+BatchPublishError
+OutboundMessage
+APIs
+acknowledgement
+ack_every
+ack_first
+allow_atomic_publish
