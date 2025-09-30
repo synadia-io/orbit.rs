@@ -1,10 +1,14 @@
-name: ci
+name: nats-extra
 
 on:
   push:
+    paths:
+      - 'nats-extra/**'
     branches:
       - main
   pull_request:
+    paths:
+      - 'nats-extra/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -18,6 +22,7 @@ env:
 defaults:
   run:
     shell: bash
+    working-directory: nats-extra
 
 jobs:
   test_matrix:
@@ -135,18 +140,6 @@ jobs:
       - name: Check lint
         run: cargo hack check -p nats-extra
 
-  check_licenses:
-    name: check licenses (ubuntu-latest / stable)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v3
-      - name: Run cargo deny
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-          command-arguments: licenses
-
   check_msrv:
     name: check minimal supported rust version (ubuntu-latest / msrv)
     runs-on: ubuntu-latest
@@ -189,31 +182,6 @@ jobs:
         env:
           RUST_LOG: trace
         run: cargo check --examples
-
-  check_spelling:
-    name: check spelling (ubuntu-latest / nightly)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v3
-      - name: Install llvm-config
-        run: sudo apt-get install -y libclang-dev
-
-      - name: Install nightly Rust on ubuntu-latest
-        id:   install-rust
-        uses: dtolnay/rust-toolchain@nightly
-      - name: Cache cargo-spellcheck
-        id:  cache-cargo-spellcheck
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/bin/cargo-spellcheck
-          key: ${{ runner.os }}-${{ steps.install-rust.outputs.cachekey }}-cargo-spellcheck
-      - name: Install cargo-spellcheck
-        if: steps.cache-cargo-spellcheck.outputs.cache-hit != 'true'
-        run: cargo install cargo-spellcheck
-
-      - name: Check spelling
-        run: cargo spellcheck --code 1
 
   check_min_versions:
     name: check minimal versions of transitive dependencies (ubuntu-latest / stable)
