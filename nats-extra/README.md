@@ -3,7 +3,7 @@
 [![License Apache 2](https://img.shields.io/badge/License-Apache2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Crates.io](https://img.shields.io/crates/v/nats-extra.svg)](https://crates.io/crates/nats-extra)
 [![Documentation](https://docs.rs/nats-extra/badge.svg)](https://docs.rs/nats-extra/)
-[![Build Status](https://github.com/synadia-io/orbit.rs/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/synadia-io/orbit.rs/actions)
+[![Build Status](https://github.com/synadia-io/orbit.rs/actions/workflows/nats-extra.yml/badge.svg?branch=main)](https://github.com/synadia-io/orbit.rs/actions/workflows/nats-extra.yml)
 
 Set of utilities and extensions for the Core NATS of the [async-nats](https://crates.io/crates/async-nats) crate.
 
