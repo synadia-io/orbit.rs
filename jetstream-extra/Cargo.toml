@@ -2,12 +2,13 @@
 name = "jetstream-extra"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tomasz Pietrek <tomasz@synadia.com>"]
 description = "Set of utilities and extensions for the JetStream NATS of the async-nats crate"
 license = "Apache-2.0"
 documentation = "https://docs.rs/jetstream-extra"
 homepage = "https://github.com/synadia-io/orbit.rs"
 repository = "https://github.com/synadia-io/orbit.rs"
-keywords = ["nats", "extra", "extensions", "messaging", "api", "jetstream"]
+keywords = ["nats", "extra", "extensions", "api", "jetstream"]
 categories = ["network-programming", "api-bindings"]
 
 [dependencies]

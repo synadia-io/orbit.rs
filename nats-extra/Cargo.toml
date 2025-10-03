@@ -1,6 +1,6 @@
 [package]
 name = "nats-extra"
-authors = ["Tomasz Pietrek <tomasz@nats.io>"]
+authors = ["Tomasz Pietrek <tomasz@synadia.com>"]
 version = "0.3.0"
 edition = "2024"
 description = "Set of utilities and extensions for the Core NATS of the async-nats crate"
