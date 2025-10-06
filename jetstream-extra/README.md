@@ -7,6 +7,11 @@
 
 Set of utilities and extensions for the JetStream NATS of the [async-nats](https://crates.io/crates/async-nats) crate.
 
+## Features
+
+- **Batch Publishing** - Atomic batch publishing ensuring all-or-nothing message storage
+- **Batch Fetching** - Efficient multi-message retrieval using DIRECT.GET API
+
 ## Batch Publishing
 
 Atomic batch publishing implementation for JetStream streams, ensuring that either all messages in a batch are stored or none are.
@@ -45,6 +50,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ack = batch.commit("events.notification", "notify-complete".into()).await?;
 
     println!("Batch published with sequence: {}", ack.sequence);
+
+    Ok(())
+}
+```
+
+## Batch Fetching
+
+Efficient batch fetching of messages from JetStream streams using the DIRECT.GET API, supporting:
+- Fetching multiple messages in a single request
+- Subject filtering with wildcards
+- Sequence and time-based ranges
+- Multi-subject last message queries
+
+### Fetch a batch of messages
+
+```rust
+use async_nats::jetstream;
+use jetstream_extra::batch_fetch::{BatchFetchExt, GetBatchOptions};
+use futures::StreamExt;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = async_nats::connect("demo.nats.io").await?;
+    let context = jetstream::new(client);
+
+    // Fetch 100 messages starting from sequence 1
+    let mut messages = context
+        .get_batch("my_stream", 100, GetBatchOptions::default())
+        .await?;
+
+    while let Some(msg) = messages.next().await {
+        let msg = msg?;
+        println!("Message at seq {}: {:?}", msg.sequence, msg.subject);
+    }
+
+    Ok(())
+}
+```
+
+### Get last messages for multiple subjects
+
+```rust
+use async_nats::jetstream;
+use jetstream_extra::batch_fetch::{BatchFetchExt, GetLastOptions};
+use futures::StreamExt;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = async_nats::connect("demo.nats.io").await?;
+    let context = jetstream::new(client);
+
+    // Get the last message for each sensor
+    let subjects = vec![
+        "sensors.temp".to_string(),
+        "sensors.humidity".to_string(),
+        "sensors.pressure".to_string(),
+    ];
+
+    let mut messages = context
+        .get_last_msgs_for("sensor_stream", subjects, GetLastOptions::default())
+        .await?;
+
+    while let Some(msg) = messages.next().await {
+        let msg = msg?;
+        println!("Last value for {}: {:?}", msg.subject, msg.payload);
+    }
 
     Ok(())
 }
