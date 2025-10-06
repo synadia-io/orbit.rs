@@ -34,6 +34,31 @@
 //! # }
 //! ```
 //!
-//! See the [batch_publish] module for detailed documentation.
+//! ## Batch Fetching
+//!
+//! The [batch_fetch] module provides efficient batch fetching of messages from streams
+//! using the DIRECT.GET API:
+//!
+//! ```no_run
+//! # use jetstream_extra::batch_fetch::BatchFetchExt;
+//! # use futures::StreamExt;
+//! # async fn example(context: async_nats::jetstream::Context) -> Result<(), Box<dyn std::error::Error>> {
+//! // Fetch 100 messages from a stream
+//! let mut messages = context
+//!     .get_batch("my_stream")
+//!     .batch(100)
+//!     .send()
+//!     .await?;
+//!
+//! while let Some(msg) = messages.next().await {
+//!     let msg = msg?;
+//!     println!("Message: {:?}", msg);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See the [batch_publish] and [batch_fetch] modules for detailed documentation.
 
+pub mod batch_fetch;
 pub mod batch_publish;
