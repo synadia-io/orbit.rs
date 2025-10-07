@@ -28,8 +28,7 @@
 //!
 //! // Fetch 100 messages starting from sequence 1
 //! let mut messages = context
-//!     .get_batch("my_stream")
-//!     .batch(100)
+//!     .get_batch("my_stream", 100)
 //!     .send()
 //!     .await?;
 //!
@@ -91,7 +90,7 @@ where
 {
     context: T,
     stream: String,
-    batch: Option<usize>,
+    batch: usize,
     seq: Option<u64>,
     subject: Option<String>,
     max_bytes: Option<usize>,
@@ -120,7 +119,7 @@ pub trait BatchFetchExt: ClientProvider + TimeoutProvider + RequestSender + Clon
     /// Uses the DIRECT.GET API to efficiently retrieve multiple messages
     /// in a single request. The server sends messages without flow control
     /// up to the specified batch size or max_bytes limit.
-    fn get_batch(&self, stream: &str) -> GetBatchBuilder<Self, NoSeq, NoTime>;
+    fn get_batch(&self, stream: &str, batch: usize) -> GetBatchBuilder<Self, NoSeq, NoTime>;
 
     /// Create a builder for fetching the last messages for multiple subjects.
     ///
@@ -302,11 +301,11 @@ impl<T> BatchFetchExt for T
 where
     T: ClientProvider + TimeoutProvider + RequestSender + Clone + Send + Sync,
 {
-    fn get_batch(&self, stream: &str) -> GetBatchBuilder<Self, NoSeq, NoTime> {
+    fn get_batch(&self, stream: &str, batch: usize) -> GetBatchBuilder<Self, NoSeq, NoTime> {
         GetBatchBuilder {
             context: self.clone(),
             stream: stream.to_string(),
-            batch: None,
+            batch,
             seq: None,
             subject: None,
             max_bytes: None,
@@ -333,16 +332,6 @@ impl<T, SEQ, TIME> GetBatchBuilder<T, SEQ, TIME>
 where
     T: ClientProvider + TimeoutProvider + RequestSender + Clone + Send + Sync,
 {
-    /// Set the batch size (number of messages to fetch).
-    ///
-    /// # Limits
-    /// - Maximum: 1000 messages per request (server limit)
-    /// - Returns `BatchFetchErrorKind::BatchSizeTooLarge` if exceeded
-    pub fn batch(mut self, batch: usize) -> Self {
-        self.batch = Some(batch);
-        self
-    }
-
     /// Set the subject filter (may include wildcards).
     pub fn subject<S: Into<String>>(mut self, subject: S) -> Self {
         self.subject = Some(subject.into());
@@ -363,13 +352,13 @@ where
 {
     /// Set the starting sequence number.
     /// This is mutually exclusive with `start_time`.
-    pub fn seq(mut self, seq: u64) -> GetBatchBuilder<T, WithSeq, NoTime> {
+    pub fn sequence(mut self, seq: u64) -> GetBatchBuilder<T, WithSeq, NoTime> {
         self.seq = Some(seq);
         GetBatchBuilder {
             context: self.context,
             stream: self.stream,
-            batch: self.batch,
             seq: self.seq,
+            batch: self.batch,
             subject: self.subject,
             max_bytes: self.max_bytes,
             start_time: self.start_time,
@@ -425,12 +414,8 @@ where
             return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidStreamName));
         }
 
-        let batch = self
-            .batch
-            .ok_or_else(|| BatchFetchError::new(BatchFetchErrorKind::BatchSizeRequired))?;
-
         // Validate batch size against server limit
-        if batch > 1000 {
+        if self.batch > 1000 {
             return Err(BatchFetchError::new(BatchFetchErrorKind::BatchSizeTooLarge));
         }
 
@@ -458,7 +443,7 @@ where
                 None
             },
             next_by_subj: self.subject,
-            batch,
+            batch: self.batch,
             max_bytes: self.max_bytes,
             start_time: self
                 .start_time
