@@ -222,7 +222,11 @@ async fn test_batch_fetch_seq_and_subject() -> Result<(), Box<dyn std::error::Er
         sequences.push(msg.sequence);
     }
 
-    assert_eq!(sequences, vec![6, 8, 10], "Should get only B messages from seq 5+");
+    assert_eq!(
+        sequences,
+        vec![6, 8, 10],
+        "Should get only B messages from seq 5+"
+    );
 
     Ok(())
 }
@@ -432,12 +436,7 @@ async fn test_invalid_parameters() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Test: seq = 0 should fail
-    let result = context
-        .get_batch(stream_name)
-        .batch(5)
-        .seq(0)
-        .send()
-        .await;
+    let result = context.get_batch(stream_name).batch(5).seq(0).send().await;
 
     match result {
         Err(e) if e.kind() == BatchFetchErrorKind::InvalidOption => {
@@ -565,7 +564,10 @@ async fn test_more_than_available() -> Result<(), Box<dyn std::error::Error>> {
         count += 1;
     }
 
-    assert_eq!(count, 5, "Should get only 5 messages even though 10 requested");
+    assert_eq!(
+        count, 5,
+        "Should get only 5 messages even though 10 requested"
+    );
     Ok(())
 }
 
@@ -611,7 +613,10 @@ async fn test_seq_higher_than_available() -> Result<(), Box<dyn std::error::Erro
         }
     }
 
-    assert_eq!(count, 0, "Should get no messages when seq is higher than available");
+    assert_eq!(
+        count, 0,
+        "Should get no messages when seq is higher than available"
+    );
     Ok(())
 }
 
@@ -634,13 +639,22 @@ async fn test_get_last_with_up_to_seq() -> Result<(), Box<dyn std::error::Error>
     // Publish messages
     // Sequences: 1,2,3 = data.A; 4,5,6 = data.B; 7,8,9 = data.A
     for i in 0..3 {
-        context.publish("data.A", format!("A{}", i).into()).await?.await?;
+        context
+            .publish("data.A", format!("A{}", i).into())
+            .await?
+            .await?;
     }
     for i in 0..3 {
-        context.publish("data.B", format!("B{}", i).into()).await?.await?;
+        context
+            .publish("data.B", format!("B{}", i).into())
+            .await?
+            .await?;
     }
     for i in 3..6 {
-        context.publish("data.A", format!("A{}", i).into()).await?.await?;
+        context
+            .publish("data.A", format!("A{}", i).into())
+            .await?
+            .await?;
     }
 
     // Get last messages up to sequence 6
@@ -658,8 +672,16 @@ async fn test_get_last_with_up_to_seq() -> Result<(), Box<dyn std::error::Error>
         results.insert(msg.subject.clone(), msg.sequence);
     }
 
-    assert_eq!(results.get("data.A"), Some(&3), "Last data.A up to seq 6 should be seq 3");
-    assert_eq!(results.get("data.B"), Some(&6), "Last data.B up to seq 6 should be seq 6");
+    assert_eq!(
+        results.get("data.A"),
+        Some(&3),
+        "Last data.A up to seq 6 should be seq 3"
+    );
+    assert_eq!(
+        results.get("data.B"),
+        Some(&6),
+        "Last data.B up to seq 6 should be seq 6"
+    );
 
     Ok(())
 }
@@ -682,7 +704,10 @@ async fn test_no_messages_match_filter() -> Result<(), Box<dyn std::error::Error
 
     // Publish messages only to data.A
     for i in 0..5 {
-        context.publish("data.A", format!("msg{}", i).into()).await?.await?;
+        context
+            .publish("data.A", format!("msg{}", i).into())
+            .await?
+            .await?;
     }
 
     // Try to get last messages for data.B and data.C (don't exist)

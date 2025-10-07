@@ -328,7 +328,10 @@ where
 
     /// Set the start time for time-based fetching.
     /// This is mutually exclusive with `seq`.
-    pub fn start_time(mut self, start_time: std::time::SystemTime) -> GetBatchBuilder<T, NoSeq, WithTime> {
+    pub fn start_time(
+        mut self,
+        start_time: std::time::SystemTime,
+    ) -> GetBatchBuilder<T, NoSeq, WithTime> {
         self.start_time = Some(start_time);
         GetBatchBuilder {
             context: self.context,
@@ -381,17 +384,17 @@ where
         }
 
         // Validate seq if specified (must be > 0)
-        if let Some(seq) = self.seq {
-            if seq == 0 {
-                return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidOption));
-            }
+        if let Some(seq) = self.seq
+            && seq == 0
+        {
+            return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidOption));
         }
 
         // Validate max_bytes if specified (must be > 0)
-        if let Some(max_bytes) = self.max_bytes {
-            if max_bytes == 0 {
-                return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidOption));
-            }
+        if let Some(max_bytes) = self.max_bytes
+            && max_bytes == 0
+        {
+            return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidOption));
         }
 
         // Build the batch request per ADR-31
@@ -591,22 +594,22 @@ where
             // EOB can be detected in two ways:
             // 1. ADR-31 spec: Empty payload with Status: 204, Description: EOB
             // 2. Current server impl: Empty payload with missing essential headers
-            if msg.payload.is_empty() {
-                if let Some(headers) = &msg.headers {
-                    let status = headers.get("Status").map(|v| v.as_str());
-                    let desc = headers.get("Description").map(|v| v.as_str());
+            if msg.payload.is_empty()
+                && let Some(headers) = &msg.headers
+            {
+                let status = headers.get("Status").map(|v| v.as_str());
+                let desc = headers.get("Description").map(|v| v.as_str());
 
-                    // ADR-31 compliant EOB detection
-                    if status == Some("204") && desc == Some("EOB") {
-                        break;
-                    }
+                // ADR-31 compliant EOB detection
+                if status == Some("204") && desc == Some("EOB") {
+                    break;
+                }
 
-                    // Current server EOB detection: empty payload without essential message headers
-                    // EOB has Nats-Num-Pending but lacks Nats-Subject, Nats-Sequence, etc.
-                    if headers.get(async_nats::header::NATS_SUBJECT).is_none()
-                        && headers.get(async_nats::header::NATS_SEQUENCE).is_none() {
-                        break;
-                    }
+                // Current server EOB detection: empty payload without essential message headers
+                // EOB has Nats-Num-Pending but lacks Nats-Subject, Nats-Sequence, etc.
+                if headers.get(async_nats::header::NATS_SUBJECT).is_none()
+                    && headers.get(async_nats::header::NATS_SEQUENCE).is_none() {
+                    break;
                 }
             }
 
