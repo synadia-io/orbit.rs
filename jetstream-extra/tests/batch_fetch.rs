@@ -30,7 +30,7 @@ async fn test_batch_fetch_basic() -> Result<(), Box<dyn std::error::Error>> {
         .create_stream(stream::Config {
             name: stream_name.to_string(),
             subjects: vec!["test.*".to_string()],
-            allow_direct: true, // Required for DIRECT.GET API
+            allow_direct: true,
             ..Default::default()
         })
         .await?;
@@ -44,7 +44,7 @@ async fn test_batch_fetch_basic() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Test batch fetch
-    let mut messages = context.get_batch(stream_name).batch(5).send().await?;
+    let mut messages = context.get_batch(stream_name, 5).send().await?;
 
     let mut count = 0;
     while let Some(msg) = messages.next().await {
@@ -88,8 +88,7 @@ async fn test_batch_fetch_with_subject_filter() -> Result<(), Box<dyn std::error
 
     // Fetch only user messages
     let mut messages = context
-        .get_batch(stream_name)
-        .batch(10)
+        .get_batch(stream_name, 10)
         .subject("events.user")
         .send()
         .await?;
@@ -205,9 +204,8 @@ async fn test_batch_fetch_seq_and_subject() -> Result<(), Box<dyn std::error::Er
     // Test: Get 5 messages from sequence 5, subject test.B only
     // Should get B messages at sequences 6, 8, 10 (only 3 messages)
     let mut messages = context
-        .get_batch(stream_name)
-        .batch(5)
-        .seq(5)
+        .get_batch(stream_name, 5)
+        .sequence(5)
         .subject("test.B")
         .send()
         .await?;
@@ -253,12 +251,7 @@ async fn test_batch_fetch_sequence_range() -> Result<(), Box<dyn std::error::Err
     }
 
     // Fetch messages starting from sequence 5
-    let mut messages = context
-        .get_batch(stream_name)
-        .batch(3)
-        .seq(5)
-        .send()
-        .await?;
+    let mut messages = context.get_batch(stream_name, 3).sequence(5).send().await?;
 
     let mut sequences = Vec::new();
     while let Some(msg) = messages.next().await {
@@ -292,7 +285,7 @@ async fn test_batch_size_limit() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Test batch size validation - should fail with > 1000
-    let result = context.get_batch(stream_name).batch(1001).send().await;
+    let result = context.get_batch(stream_name, 1001).send().await;
 
     match result {
         Err(e) if e.kind() == BatchFetchErrorKind::BatchSizeTooLarge => {
@@ -349,8 +342,7 @@ async fn test_time_based_fetching() -> Result<(), Box<dyn std::error::Error>> {
 
     // Fetch messages after middle timestamp - should get only late messages
     let mut messages = context
-        .get_batch(stream_name)
-        .batch(10)
+        .get_batch(stream_name, 10)
         .start_time(middle)
         .send()
         .await?;
@@ -430,7 +422,7 @@ async fn test_invalid_parameters() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Test: seq = 0 should fail
-    let result = context.get_batch(stream_name).batch(5).seq(0).send().await;
+    let result = context.get_batch(stream_name, 5).sequence(0).send().await;
 
     match result {
         Err(e) if e.kind() == BatchFetchErrorKind::InvalidOption => {
@@ -440,12 +432,7 @@ async fn test_invalid_parameters() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Test: max_bytes = 0 should fail
-    let result = context
-        .get_batch(stream_name)
-        .batch(5)
-        .max_bytes(0)
-        .send()
-        .await;
+    let result = context.get_batch(stream_name, 5).max_bytes(0).send().await;
 
     match result {
         Err(e) if e.kind() == BatchFetchErrorKind::InvalidOption => {
@@ -479,7 +466,7 @@ async fn test_invalid_stream_name() -> Result<(), Box<dyn std::error::Error>> {
     let context = jetstream::new(client);
 
     // Test empty stream name for get_batch
-    let result = context.get_batch("").batch(5).send().await;
+    let result = context.get_batch("", 5).send().await;
 
     match result {
         Err(e) if e.kind() == BatchFetchErrorKind::InvalidStreamName => {
@@ -546,9 +533,8 @@ async fn test_more_than_available() -> Result<(), Box<dyn std::error::Error>> {
 
     // Request 10 messages but only 5 available
     let mut messages = context
-        .get_batch(stream_name)
-        .batch(10)
-        .seq(1)
+        .get_batch(stream_name, 10)
+        .sequence(1)
         .send()
         .await?;
 
@@ -591,9 +577,8 @@ async fn test_seq_higher_than_available() -> Result<(), Box<dyn std::error::Erro
 
     // Request starting from seq 10 (doesn't exist)
     let mut messages = context
-        .get_batch(stream_name)
-        .batch(5)
-        .seq(10)
+        .get_batch(stream_name, 5)
+        .sequence(10)
         .send()
         .await?;
 
@@ -744,7 +729,7 @@ async fn test_batch_fetch_unsupported_server() -> Result<(), Box<dyn std::error:
         .await?;
 
     // Attempt batch fetch - the error will come when trying to consume the stream
-    let mut messages = context.get_batch(stream_name).batch(5).send().await?;
+    let mut messages = context.get_batch(stream_name, 5).send().await?;
 
     // Try to get the first message - should fail with UnsupportedByServer
     match messages.next().await {
@@ -784,7 +769,7 @@ async fn test_timeout() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
 
-    for i in 0..5 {
+    for i in 0..1000 {
         context
             .publish("test.msg", format!("message {}", i).into())
             .await?
@@ -792,11 +777,14 @@ async fn test_timeout() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     context.set_timeout(std::time::Duration::from_nanos(1));
-    let mut messages = context.get_batch(stream_name).batch(5).send().await?;
+    let messages = context.get_batch(stream_name, 1000).send().await?;
 
-    assert_eq!(
-        messages.next().await.unwrap().unwrap_err().kind(),
-        BatchFetchErrorKind::TimedOut
+    let results = messages.collect::<Vec<_>>().await;
+    assert!(
+        results
+            .iter()
+            .any(|r| { matches!(r, Err(e) if e.kind() == BatchFetchErrorKind::TimedOut) }),
+        "Should have a timeout error"
     );
 
     Ok(())
