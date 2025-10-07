@@ -69,23 +69,19 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::StreamMessage;
 use async_nats::jetstream::context::traits::{ClientProvider, RequestSender, TimeoutProvider};
-use async_nats::jetstream::stream::RawMessage;
-use async_nats::{HeaderMap, Message, Subscriber};
-use base64::Engine as _;
+use async_nats::{Message, Subject, Subscriber};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 use serde::Serialize;
 use time::serde::rfc3339;
+use tracing::debug;
 
 // State types for compile-time mutual exclusivity
-/// State indicating no sequence has been set
 pub struct NoSeq;
-/// State indicating a sequence has been set
 pub struct WithSeq;
-/// State indicating no start time has been set
 pub struct NoTime;
-/// State indicating a start time has been set
 pub struct WithTime;
 
 /// Builder for batch fetching messages from a stream.
@@ -142,35 +138,21 @@ pub type BatchFetchError = async_nats::error::Error<BatchFetchErrorKind>;
 pub enum BatchFetchErrorKind {
     /// The server does not support batch get operations.
     UnsupportedByServer,
-    /// No messages were found matching the criteria.
     NoMessages,
-    /// Invalid response from server.
     InvalidResponse,
-    /// Request serialization error.
     Serialization,
-    /// Subscription error.
     Subscription,
-    /// Publish error.
     Publish,
-    /// Missing required header.
     MissingHeader,
-    /// Invalid header value.
     InvalidHeader,
-    /// Invalid request parameters.
     InvalidRequest,
-    /// Too many subjects in multi_last request (limit: 1024).
     TooManySubjects,
-    /// Batch size exceeds server limit (limit: 1000).
     BatchSizeTooLarge,
-    /// Batch size not specified.
     BatchSizeRequired,
-    /// Subjects not specified for multi_last.
     SubjectsRequired,
-    /// Invalid stream name.
     InvalidStreamName,
-    /// Invalid option combination or value.
     InvalidOption,
-    /// Other error.
+    TimedOut,
     Other,
 }
 
@@ -192,6 +174,7 @@ impl std::fmt::Display for BatchFetchErrorKind {
             Self::SubjectsRequired => write!(f, "subjects are required for multi_last"),
             Self::InvalidStreamName => write!(f, "invalid stream name"),
             Self::InvalidOption => write!(f, "invalid option"),
+            Self::TimedOut => write!(f, "batch fetch operation timed out"),
             Self::Other => write!(f, "batch fetch error"),
         }
     }
@@ -224,17 +207,35 @@ struct GetLastRequest {
 }
 
 /// Stream of messages from batch fetch operations.
-pub struct MessageStream {
+pub struct BatchStream {
     subscriber: Subscriber,
+    timeout: std::time::Duration,
+    timeout_at: Option<Pin<Box<tokio::time::Sleep>>>,
     terminated: bool,
 }
 
-impl Stream for MessageStream {
-    type Item = Result<RawMessage, BatchFetchError>;
+impl Stream for BatchStream {
+    type Item = Result<StreamMessage, BatchFetchError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.terminated {
             return Poll::Ready(None);
+        }
+
+        let timeout = self.timeout;
+        match self
+            .timeout_at
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)))
+            .poll_unpin(cx)
+        {
+            Poll::Ready(_) => {
+                debug!("Batch fetch operation timed out after {:?}", timeout);
+                self.terminated = true;
+                return Poll::Ready(Some(Err(BatchFetchError::new(
+                    BatchFetchErrorKind::TimedOut,
+                ))));
+            }
+            Poll::Pending => {}
         }
 
         match self.subscriber.next().poll_unpin(cx) {
@@ -249,23 +250,30 @@ impl Stream for MessageStream {
                     let status = headers.get("Status").map(|v| v.as_str());
                     let desc = headers.get("Description").map(|v| v.as_str());
 
-                    // ADR-31 compliant EOB detection
+                    // Termination by EOB.
                     if status == Some("204") && desc == Some("EOB") {
                         self.terminated = true;
                         return Poll::Ready(None);
                     }
 
-                    // Current server EOB detection: empty payload without essential message headers
-                    // EOB has Nats-Num-Pending but lacks Nats-Subject, Nats-Sequence, etc.
-                    if headers.get(async_nats::header::NATS_SUBJECT).is_none()
-                        && headers.get(async_nats::header::NATS_SEQUENCE).is_none()
+                    // Termination by empty message with headers missing.
+                    if headers.is_empty() {
+                        self.terminated = true;
+                        return Poll::Ready(None);
+                    }
+
+                    // Termination by end of batch.
+                    // TODO(jrm): we should consider hinting those to the user.
+                    if headers.get(async_nats::header::NATS_SEQUENCE).is_some()
+                        || headers.get("Nats-Num-Pending").is_some()
+                        || headers.get("Nats-UpTo-Sequence").is_some()
                     {
                         self.terminated = true;
                         return Poll::Ready(None);
                     }
                 }
 
-                match convert_to_raw_message(msg) {
+                match convert_to_stream_message(msg) {
                     Ok(raw_msg) => Poll::Ready(Some(Ok(raw_msg))),
                     Err(e) => Poll::Ready(Some(Err(e))),
                 }
@@ -411,7 +419,7 @@ where
     T: ClientProvider + TimeoutProvider + RequestSender + Clone + Send + Sync,
 {
     /// Send the batch fetch request and return a stream of messages.
-    pub async fn send(self) -> Result<MessageStream, BatchFetchError> {
+    pub async fn send(self) -> Result<BatchStream, BatchFetchError> {
         // Validate stream name
         if self.stream.is_empty() {
             return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidStreamName));
@@ -552,8 +560,7 @@ where
     T: ClientProvider + TimeoutProvider + RequestSender + Clone + Send + Sync,
 {
     /// Send the request to get last messages and return a stream.
-    pub async fn send(self) -> Result<MessageStream, BatchFetchError> {
-        // Validate stream name
+    pub async fn send(self) -> Result<BatchStream, BatchFetchError> {
         if self.stream.is_empty() {
             return Err(BatchFetchError::new(BatchFetchErrorKind::InvalidStreamName));
         }
@@ -581,7 +588,6 @@ where
             return Err(BatchFetchError::new(BatchFetchErrorKind::SubjectsRequired));
         }
 
-        // Build multi_last request per ADR-31
         let request = GetLastRequest {
             multi_last: subjects,
             batch: self.batch,
@@ -595,7 +601,6 @@ where
         let payload = serde_json::to_vec(&request)
             .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Serialization, e))?
             .into();
-        // RequestSender will add the proper prefix ($JS.API. or custom)
         let subject = format!("DIRECT.GET.{}", self.stream);
 
         send_batch_request(&self.context, subject, payload).await
@@ -606,7 +611,7 @@ async fn send_batch_request<T>(
     context: &T,
     subject: String,
     payload: Bytes,
-) -> Result<MessageStream, BatchFetchError>
+) -> Result<BatchStream, BatchFetchError>
 where
     T: ClientProvider + TimeoutProvider + RequestSender,
 {
@@ -618,27 +623,26 @@ where
         .await
         .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Subscription, e))?;
 
-    // Send the request using RequestSender which will add the proper prefix
     let request = async_nats::Request {
         inbox: Some(inbox),
         payload: Some(payload),
         headers: None,
-        timeout: None, // RequestSender will use the context's default timeout
+        timeout: None,
     };
     context
         .send_request(subject, request)
         .await
         .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Publish, e))?;
 
-    // Return MessageStream with direct subscription
-    Ok(MessageStream {
+    Ok(BatchStream {
         subscriber,
         terminated: false,
+        timeout: context.timeout(),
+        timeout_at: None,
     })
 }
 
-fn convert_to_raw_message(msg: Message) -> Result<RawMessage, BatchFetchError> {
-    // Check for error status codes
+fn convert_to_stream_message(msg: Message) -> Result<StreamMessage, BatchFetchError> {
     if msg.payload.is_empty()
         && let Some(headers) = &msg.headers
     {
@@ -663,8 +667,6 @@ fn convert_to_raw_message(msg: Message) -> Result<RawMessage, BatchFetchError> {
         ));
     }
 
-    // Parse required headers per DIRECT GET response format
-    // Using standard header names from async_nats
     let subject = headers
         .get(async_nats::header::NATS_SUBJECT)
         .ok_or_else(|| BatchFetchError::new(BatchFetchErrorKind::MissingHeader))?
@@ -687,34 +689,11 @@ fn convert_to_raw_message(msg: Message) -> Result<RawMessage, BatchFetchError> {
         time::OffsetDateTime::parse(time_str, &time::format_description::well_known::Rfc3339)
             .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::InvalidHeader, e))?;
 
-    // Convert headers to the format expected by RawMessage
-    let header_str = format_headers(&headers);
-
-    // Convert payload to base64 as RawMessage expects
-    let payload = base64::engine::general_purpose::STANDARD.encode(&msg.payload);
-
-    Ok(RawMessage {
-        subject,
+    Ok(StreamMessage {
+        subject: Subject::from(subject),
         sequence,
-        payload,
-        headers: if header_str.is_empty() {
-            None
-        } else {
-            Some(header_str)
-        },
+        payload: msg.payload,
+        headers,
         time,
     })
-}
-
-fn format_headers(headers: &HeaderMap) -> String {
-    let mut result = String::new();
-    for (key, values) in headers.iter() {
-        for value in values {
-            result.push_str(&format!("{}: {}\r\n", key, value.as_str()));
-        }
-    }
-    if !result.is_empty() {
-        result.push_str("\r\n");
-    }
-    result
 }
