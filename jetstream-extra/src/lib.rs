@@ -62,3 +62,6 @@
 
 pub mod batch_fetch;
 pub mod batch_publish;
+
+/// Re-exported type returned by Direct Get operation.
+pub use async_nats::jetstream::message::StreamMessage;

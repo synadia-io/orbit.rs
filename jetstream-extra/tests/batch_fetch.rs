@@ -97,7 +97,7 @@ async fn test_batch_fetch_with_subject_filter() -> Result<(), Box<dyn std::error
     let mut count = 0;
     while let Some(msg) = messages.next().await {
         let msg = msg?;
-        assert_eq!(msg.subject, "events.user");
+        assert_eq!(msg.subject, "events.user".into());
         count += 1;
     }
 
@@ -156,14 +156,11 @@ async fn test_get_last_msgs_for() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Some(msg) = messages.next().await {
         let msg = msg?;
-        subjects_found.insert(msg.subject.clone());
+        subjects_found.insert(msg.subject.to_string());
         count += 1;
 
         // The last message for each sensor should be reading 2
-        let payload = String::from_utf8(base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &msg.payload,
-        )?)?;
+        let payload = String::from_utf8(msg.payload.to_vec())?;
         assert!(
             payload.ends_with("reading 2"),
             "Should get the last message"
@@ -218,7 +215,7 @@ async fn test_batch_fetch_seq_and_subject() -> Result<(), Box<dyn std::error::Er
     let mut sequences = Vec::new();
     while let Some(msg) = messages.next().await {
         let msg = msg?;
-        assert_eq!(msg.subject, "test.B");
+        assert_eq!(msg.subject, "test.B".into());
         sequences.push(msg.sequence);
     }
 
@@ -361,10 +358,7 @@ async fn test_time_based_fetching() -> Result<(), Box<dyn std::error::Error>> {
     let mut count = 0;
     while let Some(msg) = messages.next().await {
         let msg = msg?;
-        let payload = String::from_utf8(base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &msg.payload,
-        )?)?;
+        let payload = String::from_utf8(msg.payload.to_vec())?;
         assert!(
             payload.starts_with("late message"),
             "Should only get late messages"
@@ -669,7 +663,7 @@ async fn test_get_last_with_up_to_seq() -> Result<(), Box<dyn std::error::Error>
     let mut results = std::collections::HashMap::new();
     while let Some(msg) = messages.next().await {
         let msg = msg?;
-        results.insert(msg.subject.clone(), msg.sequence);
+        results.insert(msg.subject.to_string(), msg.sequence);
     }
 
     assert_eq!(
@@ -768,4 +762,42 @@ async fn test_batch_fetch_unsupported_server() -> Result<(), Box<dyn std::error:
             panic!("Expected error but stream ended without messages");
         }
     }
+}
+
+#[tokio::test]
+async fn test_timeout() -> Result<(), Box<dyn std::error::Error>> {
+    // Start an embedded NATS server (current versions don't support batch get)
+    let server = nats_server::run_server("tests/configs/jetstream.conf");
+
+    // Connect to the server
+    let client = async_nats::connect(server.client_url()).await?;
+    let mut context = jetstream::new(client);
+
+    // Create a stream
+    let stream_name = "TIMEOUT";
+    context
+        .create_stream(stream::Config {
+            name: stream_name.to_string(),
+            subjects: vec!["test.*".to_string()],
+            allow_direct: true,
+            ..Default::default()
+        })
+        .await?;
+
+    for i in 0..5 {
+        context
+            .publish("test.msg", format!("message {}", i).into())
+            .await?
+            .await?;
+    }
+
+    context.set_timeout(std::time::Duration::from_nanos(1));
+    let mut messages = context.get_batch(stream_name).batch(5).send().await?;
+
+    assert_eq!(
+        messages.next().await.unwrap().unwrap_err().kind(),
+        BatchFetchErrorKind::TimedOut
+    );
+
+    Ok(())
 }
