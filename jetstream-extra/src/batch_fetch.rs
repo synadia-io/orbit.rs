@@ -71,10 +71,10 @@ use std::task::{Context, Poll};
 
 use async_nats::jetstream::context::traits::{ClientProvider, RequestSender, TimeoutProvider};
 use async_nats::jetstream::stream::RawMessage;
-use async_nats::{HeaderMap, Message};
+use async_nats::{HeaderMap, Message, Subscriber};
 use base64::Engine as _;
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use serde::Serialize;
 use time::serde::rfc3339;
 
@@ -225,14 +225,57 @@ struct GetLastRequest {
 
 /// Stream of messages from batch fetch operations.
 pub struct MessageStream {
-    inner: Pin<Box<dyn Stream<Item = Result<RawMessage, BatchFetchError>> + Send>>,
+    subscriber: Subscriber,
+    terminated: bool,
 }
 
 impl Stream for MessageStream {
     type Item = Result<RawMessage, BatchFetchError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
+        if self.terminated {
+            return Poll::Ready(None);
+        }
+
+        match self.subscriber.next().poll_unpin(cx) {
+            Poll::Ready(Some(msg)) => {
+                // Check for End-Of-Batch marker
+                // EOB can be detected in two ways:
+                // 1. ADR-31 spec: Empty payload with Status: 204, Description: EOB
+                // 2. Current server impl: Empty payload with missing essential headers
+                if msg.payload.is_empty()
+                    && let Some(headers) = &msg.headers
+                {
+                    let status = headers.get("Status").map(|v| v.as_str());
+                    let desc = headers.get("Description").map(|v| v.as_str());
+
+                    // ADR-31 compliant EOB detection
+                    if status == Some("204") && desc == Some("EOB") {
+                        self.terminated = true;
+                        return Poll::Ready(None);
+                    }
+
+                    // Current server EOB detection: empty payload without essential message headers
+                    // EOB has Nats-Num-Pending but lacks Nats-Subject, Nats-Sequence, etc.
+                    if headers.get(async_nats::header::NATS_SUBJECT).is_none()
+                        && headers.get(async_nats::header::NATS_SEQUENCE).is_none()
+                    {
+                        self.terminated = true;
+                        return Poll::Ready(None);
+                    }
+                }
+
+                match convert_to_raw_message(msg) {
+                    Ok(raw_msg) => Poll::Ready(Some(Ok(raw_msg))),
+                    Err(e) => Poll::Ready(Some(Err(e))),
+                }
+            }
+            Poll::Ready(None) => {
+                self.terminated = true;
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -570,7 +613,7 @@ where
     // Create inbox and subscribe to it for responses
     let client = context.client();
     let inbox = client.new_inbox();
-    let mut subscriber = client
+    let subscriber = client
         .subscribe(inbox.clone())
         .await
         .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Subscription, e))?;
@@ -587,41 +630,10 @@ where
         .await
         .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Publish, e))?;
 
-    // Convert the subscription to a stream that stops at EOB
-    let stream = async_stream::stream! {
-        while let Some(msg) = subscriber.next().await {
-            // Check for End-Of-Batch marker
-            // EOB can be detected in two ways:
-            // 1. ADR-31 spec: Empty payload with Status: 204, Description: EOB
-            // 2. Current server impl: Empty payload with missing essential headers
-            if msg.payload.is_empty()
-                && let Some(headers) = &msg.headers
-            {
-                let status = headers.get("Status").map(|v| v.as_str());
-                let desc = headers.get("Description").map(|v| v.as_str());
-
-                // ADR-31 compliant EOB detection
-                if status == Some("204") && desc == Some("EOB") {
-                    break;
-                }
-
-                // Current server EOB detection: empty payload without essential message headers
-                // EOB has Nats-Num-Pending but lacks Nats-Subject, Nats-Sequence, etc.
-                if headers.get(async_nats::header::NATS_SUBJECT).is_none()
-                    && headers.get(async_nats::header::NATS_SEQUENCE).is_none() {
-                    break;
-                }
-            }
-
-            match convert_to_raw_message(msg) {
-                Ok(raw_msg) => yield Ok(raw_msg),
-                Err(e) => yield Err(e),
-            }
-        }
-    };
-
+    // Return MessageStream with direct subscription
     Ok(MessageStream {
-        inner: Box::pin(stream),
+        subscriber,
+        terminated: false,
     })
 }
 
