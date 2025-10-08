@@ -45,8 +45,7 @@
 //! # async fn example(context: async_nats::jetstream::Context) -> Result<(), Box<dyn std::error::Error>> {
 //! // Fetch 100 messages from a stream
 //! let mut messages = context
-//!     .get_batch("my_stream")
-//!     .batch(100)
+//!     .get_batch("my_stream", 100)
 //!     .send()
 //!     .await?;
 //!

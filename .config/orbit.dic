@@ -176,3 +176,6 @@ acknowledgement
 ack_every
 ack_first
 allow_atomic_publish
+batch_fetch
+SystemTime
+OffsetDateTime
