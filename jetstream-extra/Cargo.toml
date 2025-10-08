@@ -12,7 +12,7 @@ keywords = ["nats", "extra", "extensions", "api", "jetstream"]
 categories = ["network-programming", "api-bindings"]
 
 [dependencies]
-async-nats = { git = "https://github.com/nats-io/nats.rs", package = "async-nats", branch = "main" }
+async-nats = "0.44.2"
 bytes = "1"
 futures = "0.3"
 futures-util = "0.3"
