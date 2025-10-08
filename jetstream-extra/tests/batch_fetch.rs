@@ -14,6 +14,7 @@
 use async_nats::jetstream::{self, stream};
 use futures::StreamExt;
 use jetstream_extra::batch_fetch::{BatchFetchErrorKind, BatchFetchExt};
+use time::OffsetDateTime;
 
 #[tokio::test]
 async fn test_batch_fetch_basic() -> Result<(), Box<dyn std::error::Error>> {
@@ -330,7 +331,7 @@ async fn test_time_based_fetching() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
     }
 
-    let middle = SystemTime::now();
+    let middle = OffsetDateTime::now_utc();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     for i in 0..5 {

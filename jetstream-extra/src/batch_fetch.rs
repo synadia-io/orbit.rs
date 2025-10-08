@@ -74,6 +74,7 @@ use async_nats::{Message, Subject, Subscriber};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 use serde::Serialize;
+use time::OffsetDateTime;
 use time::serde::rfc3339;
 use tracing::debug;
 
@@ -94,7 +95,7 @@ where
     seq: Option<u64>,
     subject: Option<String>,
     max_bytes: Option<usize>,
-    start_time: Option<std::time::SystemTime>,
+    start_time: Option<OffsetDateTime>,
     _phantom: PhantomData<(SEQ, TIME)>,
 }
 
@@ -107,7 +108,7 @@ where
     stream: String,
     subjects: Option<Vec<String>>,
     up_to_seq: Option<u64>,
-    up_to_time: Option<std::time::SystemTime>,
+    up_to_time: Option<OffsetDateTime>,
     batch: Option<usize>,
     _phantom: PhantomData<(SEQ, TIME)>,
 }
@@ -286,17 +287,6 @@ impl Stream for BatchStream {
     }
 }
 
-/// Helper function to convert SystemTime to OffsetDateTime
-fn system_time_to_offset_datetime(
-    time: std::time::SystemTime,
-) -> Result<time::OffsetDateTime, BatchFetchError> {
-    let duration = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Other, e))?;
-    time::OffsetDateTime::from_unix_timestamp_nanos(duration.as_nanos() as i128)
-        .map_err(|e| BatchFetchError::with_source(BatchFetchErrorKind::Other, e))
-}
-
 impl<T> BatchFetchExt for T
 where
     T: ClientProvider + TimeoutProvider + RequestSender + Clone + Send + Sync,
@@ -368,10 +358,7 @@ where
 
     /// Set the start time for time-based fetching.
     /// This is mutually exclusive with `seq`.
-    pub fn start_time(
-        mut self,
-        start_time: std::time::SystemTime,
-    ) -> GetBatchBuilder<T, NoSeq, WithTime> {
+    pub fn start_time(mut self, start_time: OffsetDateTime) -> GetBatchBuilder<T, NoSeq, WithTime> {
         self.start_time = Some(start_time);
         GetBatchBuilder {
             context: self.context,
@@ -445,10 +432,7 @@ where
             next_by_subj: self.subject,
             batch: self.batch,
             max_bytes: self.max_bytes,
-            start_time: self
-                .start_time
-                .map(system_time_to_offset_datetime)
-                .transpose()?,
+            start_time: self.start_time,
         };
 
         let payload = serde_json::to_vec(&request)
@@ -509,7 +493,7 @@ where
 
     /// Set the time to fetch up to.
     /// This is mutually exclusive with `up_to_seq`.
-    pub fn up_to_time(mut self, time: std::time::SystemTime) -> GetLastBuilder<T, NoSeq, WithTime> {
+    pub fn up_to_time(mut self, time: OffsetDateTime) -> GetLastBuilder<T, NoSeq, WithTime> {
         self.up_to_time = Some(time);
         GetLastBuilder {
             context: self.context,
@@ -577,10 +561,7 @@ where
             multi_last: subjects,
             batch: self.batch,
             up_to_seq: self.up_to_seq,
-            up_to_time: self
-                .up_to_time
-                .map(system_time_to_offset_datetime)
-                .transpose()?,
+            up_to_time: self.up_to_time,
         };
 
         let payload = serde_json::to_vec(&request)
