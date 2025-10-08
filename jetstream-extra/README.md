@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jetstream = jetstream::new(client);
 
     // Create or get a stream with atomic publishing enabled
-    let stream = jetstream.get_or_create_stream(jetstream::stream::Config {
+    let _stream = jetstream.get_or_create_stream(jetstream::stream::Config {
         name: "events".to_string(),
         subjects: vec!["events.*".to_string()],
         allow_atomic_publish: true,
@@ -67,7 +67,7 @@ Efficient batch fetching of messages from JetStream streams using the DIRECT.GET
 
 ```rust
 use async_nats::jetstream;
-use jetstream_extra::batch_fetch::{BatchFetchExt, GetBatchOptions};
+use jetstream_extra::batch_fetch::BatchFetchExt;
 use futures::StreamExt;
 
 #[tokio::main]
@@ -77,7 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Fetch 100 messages starting from sequence 1
     let mut messages = context
-        .get_batch("my_stream", 100, GetBatchOptions::default())
+        .get_batch("my_stream", 100)
+        .send()
         .await?;
 
     while let Some(msg) = messages.next().await {
@@ -93,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use async_nats::jetstream;
-use jetstream_extra::batch_fetch::{BatchFetchExt, GetLastOptions};
+use jetstream_extra::batch_fetch::BatchFetchExt;
 use futures::StreamExt;
 
 #[tokio::main]
@@ -109,7 +110,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     let mut messages = context
-        .get_last_msgs_for("sensor_stream", subjects, GetLastOptions::default())
+        .get_last_messages_for("sensor_stream")
+        .subjects(subjects)
+        .send()
         .await?;
 
     while let Some(msg) = messages.next().await {
