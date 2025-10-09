@@ -179,3 +179,9 @@ allow_atomic_publish
 batch_fetch
 SystemTime
 OffsetDateTime
+incrementing
+decrementing
+decrement
+AllowMsgCounter
+AllowDirect
+PubAck

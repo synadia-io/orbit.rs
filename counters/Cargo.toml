@@ -1,31 +1,27 @@
 [package]
-name = "jetstream-extra"
-version = "0.2.0"
+name = "nats-counters"
+version = "0.1.0"
 edition = "2024"
 authors = ["Tomasz Pietrek <tomasz@synadia.com>"]
-description = "Set of utilities and extensions for the JetStream NATS of the async-nats crate"
+description = "NATS JetStream counters API"
 license = "Apache-2.0"
-documentation = "https://docs.rs/jetstream-extra"
+documentation = "https://docs.rs/nats-counters"
 homepage = "https://github.com/synadia-io/orbit.rs"
 repository = "https://github.com/synadia-io/orbit.rs"
-keywords = ["nats", "extra", "extensions", "api", "jetstream"]
+keywords = ["nats","extensions", "api", "jetstream", "counters"]
 categories = ["network-programming", "api-bindings"]
 
 [dependencies]
 async-nats = { git = "https://github.com/nats-io/nats.rs", branch = "main" }
-bytes = "1"
-futures = "0.3"
 futures-util = "0.3"
-nuid = "0.5"
+jetstream-extra = { path = "../jetstream-extra" }
+num-bigint = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
-time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "fs", "io-util"] }
-tracing = "0.1"
-base64 = "0.22"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "fs", "io-util"] }
+tokio = { version = "1", features = ["macros", "rt", "fs", "io-util", "time"] }
 tokio-stream = { version = "0.1", features = ["io-util"] }
 nats_server = { git = "https://github.com/nats-io/nats.rs", package = "nats-server" }
 
