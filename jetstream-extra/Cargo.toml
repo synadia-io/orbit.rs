@@ -1,6 +1,6 @@
 [package]
 name = "jetstream-extra"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Tomasz Pietrek <tomasz@synadia.com>"]
 description = "Set of utilities and extensions for the JetStream NATS of the async-nats crate"
