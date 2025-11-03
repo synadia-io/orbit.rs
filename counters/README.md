@@ -1,5 +1,10 @@
 # NATS Counters
 
+[![License Apache 2](https://img.shields.io/badge/License-Apache2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Crates.io](https://img.shields.io/crates/v/nats-counters.svg)](https://crates.io/crates/nats-counters)
+[![Documentation](https://docs.rs/nats-counters/badge.svg)](https://docs.rs/nats-counters/)
+[![Build Status](https://github.com/synadia-io/orbit.rs/actions/workflows/nats-counters.yml/badge.svg?branch=main)](https://github.com/synadia-io/orbit.rs/actions/workflows/nats-counters.yml)
+
 Distributed counters for NATS JetStream, providing high-performance counter operations with arbitrary precision integers.
 
 
