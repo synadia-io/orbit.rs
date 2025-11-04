@@ -12,10 +12,9 @@ keywords = ["nats","extensions", "api", "jetstream", "counters"]
 categories = ["network-programming", "api-bindings"]
 
 [dependencies]
-# async-nats = { git = "https://github.com/nats-io/nats.rs", branch = "main" }
 async-nats = "0.45.0"
 futures-util = "0.3"
-jetstream-extra = { path = "../jetstream-extra" }
+jetstream-extra = "0.2.1"
 num-bigint = "0.4.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
