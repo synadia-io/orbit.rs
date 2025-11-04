@@ -3,12 +3,12 @@ name: nats-counters
 on:
   push:
     paths:
-      - 'counters/**'
+      - 'nats-counters/**'
     branches:
       - main
   pull_request:
     paths:
-      - 'counters/**'
+      - 'nats-counters/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -22,7 +22,7 @@ env:
 defaults:
   run:
     shell: bash
-    working-directory: counters
+    working-directory: nats-counters
 
 jobs:
   test_matrix:

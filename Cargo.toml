@@ -4,6 +4,7 @@ resolver = "2"
 
 members = [
     "nats-extra",
-    "jetstream-extra", "counters",
+    "jetstream-extra",
+    "nats-counters",
 ]
 
