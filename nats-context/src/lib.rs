@@ -5,28 +5,49 @@ use std::{fs, io, option};
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
 pub struct Settings {
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
     pub socks_proxy: String,
+    #[serde(default)]
     pub token: String,
+    #[serde(default)]
     pub user: String,
+    #[serde(default)]
     pub password: String,
+    #[serde(default)]
     pub creds: String,
+    #[serde(default)]
     pub nkey: String,
+    #[serde(default)]
     pub cert: String,
+    #[serde(default)]
     pub key: String,
+    #[serde(default)]
     pub ca: String,
+    #[serde(default)]
     pub nsc: String,
+    #[serde(default)]
     pub jetstream_domain: String,
+    #[serde(default)]
     pub jetstream_api_prefix: String,
+    #[serde(default)]
     pub jetstream_event_prefix: String,
+    #[serde(default)]
     pub inbox_prefix: String,
+    #[serde(default)]
     pub user_jwt: String,
+    #[serde(default)]
     pub color_scheme: String,
     #[serde(default)]
     pub tls_first: bool,
+    #[serde(default)]
     pub windows_cert_store: String,
+    #[serde(default)]
     pub windows_cert_match_by: String,
+    #[serde(default)]
     pub windows_cert_match: String,
     pub windows_ca_certs_match: Option<Vec<String>>,
 }
