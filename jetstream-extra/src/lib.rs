@@ -34,6 +34,23 @@
 //! # }
 //! ```
 //!
+//! ## Fast Ingest Batch Publishing
+//!
+//! The [batch_publish_fast] module provides high-throughput, non-atomic batch publishing
+//! using JetStream's fast-ingest feature (nats-server 2.14+):
+//!
+//! ```no_run
+//! # use jetstream_extra::batch_publish_fast::FastPublishExt;
+//! # async fn example(client: impl FastPublishExt) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut batch = client.fast_publish().build()?;
+//! for i in 0..1000 {
+//!     batch.add("events.data", format!("msg {i}").into()).await?;
+//! }
+//! let ack = batch.commit("events.done", "final".into()).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## Batch Fetching
 //!
 //! The [batch_fetch] module provides efficient batch fetching of messages from streams
@@ -61,6 +78,7 @@
 
 pub mod batch_fetch;
 pub mod batch_publish;
+pub mod batch_publish_fast;
 
 pub use async_nats::Subject;
 /// Re-exported type returned by Direct Get operation.

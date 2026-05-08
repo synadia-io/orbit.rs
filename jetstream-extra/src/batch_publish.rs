@@ -862,6 +862,8 @@ pub enum BatchPublishErrorKind {
     BatchPublishNotEnabled,
     /// Batch publish is incomplete and was abandoned
     BatchPublishIncomplete,
+    /// Server has too many inflight batches (server limit: 50)
+    BatchPublishTooManyInflight,
     /// Batch uses unsupported headers (Nats-Msg-Id or Nats-Expected-Last-Msg-Id)
     BatchPublishUnsupportedHeader,
     /// Other unspecified error
@@ -875,6 +877,7 @@ impl BatchPublishErrorKind {
         match error.error_code() {
             ErrorCode::ATOMIC_PUBLISH_DISABLED => Self::BatchPublishNotEnabled,
             ErrorCode::ATOMIC_PUBLISH_INCOMPLETE_BATCH => Self::BatchPublishIncomplete,
+            ErrorCode::ATOMIC_PUBLISH_TOO_MANY_INFLIGHT => Self::BatchPublishTooManyInflight,
             ErrorCode::ATOMIC_PUBLISH_UNSUPPORTED_HEADER => Self::BatchPublishUnsupportedHeader,
             ErrorCode::ATOMIC_PUBLISH_TOO_LARGE_BATCH => Self::MaxMessagesExceeded,
             _ => Self::Other,
@@ -894,6 +897,9 @@ impl Display for BatchPublishErrorKind {
             Self::BatchPublishNotEnabled => write!(f, "batch publishing not enabled on stream"),
             Self::BatchPublishIncomplete => {
                 write!(f, "batch publish is incomplete and was abandoned")
+            }
+            Self::BatchPublishTooManyInflight => {
+                write!(f, "server has too many inflight batches (limit: 50)")
             }
             Self::BatchPublishUnsupportedHeader => write!(
                 f,
