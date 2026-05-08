@@ -235,10 +235,10 @@ mod batch_publish_error_tests {
         let err = batch.add("test_incomplete.1", "data".into()).await;
 
         // This might fail either immediately or on commit
-        if err.is_err() {
+        if let Err(err) = err {
             assert_eq!(
-                err.unwrap_err().kind(),
-                BatchPublishErrorKind::BatchPublishIncomplete
+                err.kind(),
+                BatchPublishErrorKind::BatchPublishTooManyInflight
             );
         } else {
             // If add succeeded, commit should fail
@@ -246,7 +246,10 @@ mod batch_publish_error_tests {
                 .commit("test_incomplete.2", "final".into())
                 .await
                 .unwrap_err();
-            assert_eq!(err.kind(), BatchPublishErrorKind::BatchPublishIncomplete);
+            assert_eq!(
+                err.kind(),
+                BatchPublishErrorKind::BatchPublishTooManyInflight
+            );
         }
     }
 

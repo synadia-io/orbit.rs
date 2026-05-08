@@ -10,6 +10,7 @@ Set of utilities and extensions for the JetStream NATS of the [async-nats](https
 ## Features
 
 - **Batch Publishing** - Atomic batch publishing ensuring all-or-nothing message storage
+- **Fast Ingest Batch Publishing** - High-throughput, non-atomic batch publishing with server-driven flow control (requires nats-server 2.14+)
 - **Batch Fetching** - Efficient multi-message retrieval using DIRECT.GET API
 
 ## Batch Publishing
@@ -54,6 +55,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Fast Ingest Batch Publishing
+
+High-throughput, non-atomic batch publishing using JetStream's fast-ingest feature (ADR-50, requires nats-server 2.14 or later). Unlike atomic batch publishing, messages are persisted as they arrive and the server uses a flow-control channel to coordinate throughput across concurrent publishers.
+
+Use fast ingest when:
+- You need to ship millions of messages per batch and don't need all-or-nothing semantics.
+- Throughput matters more than atomicity.
+- You want the server to dynamically tune ack frequency based on load.
+
+The stream must have `allow_batched: true`. The publisher owns a dedicated inbox subscription for the duration of the batch and drives ack handling inline — no background task, no locks.
+
+### Complete example
+
+```rust
+use async_nats::jetstream;
+use jetstream_extra::batch_publish_fast::{FastPublishExt, GapMode};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = async_nats::connect("nats://127.0.0.1:4222").await?;
+    let jetstream = jetstream::new(client);
+
+    // Stream must have allow_batched: true (not yet exposed in async-nats
+    // 0.45.0 StreamConfig — create via raw JetStream API until upstream
+    // adds the field).
+
+    let mut batch = jetstream
+        .fast_publish()
+        .flow(100)                                 // ack every 100 messages (ceiling)
+        .max_outstanding_acks(2)                   // up to 200 messages in flight
+        .gap_mode(GapMode::Fail)                   // abort on any gap (default)
+        .ack_timeout(Duration::from_secs(10))
+        .on_error(|e| eprintln!("fast publish event: {e}"))
+        .build()?;
+
+    // Stream 10,000 messages. The stall gate transparently waits for flow
+    // acks and sends pings to recover from any lost acks.
+    for i in 0..10_000 {
+        batch.add("metrics.cpu", format!("sample {i}").into()).await?;
+    }
+
+    // End-of-batch commit — the commit message itself is NOT stored.
+    // Use `commit(...)` instead if you want a final message persisted.
+    let ack = batch.close().await?;
+    println!("committed {} messages as batch {}", ack.batch_size, ack.batch_id);
+
+    Ok(())
+}
+```
+
+See `examples/fast_publisher.rs` for a runnable example.
 
 ## Batch Fetching
 
