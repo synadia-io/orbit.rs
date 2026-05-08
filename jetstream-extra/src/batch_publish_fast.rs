@@ -42,6 +42,7 @@ use std::{
 };
 
 use async_nats::jetstream::message::OutboundMessage;
+use async_nats::Subject;
 use async_nats::subject::ToSubject;
 use bytes::Bytes;
 use futures::StreamExt;
@@ -317,9 +318,16 @@ pub(crate) fn build_reply_prefix(inbox: &str, flow: u16, gap: GapMode) -> String
 /// Build a full per-message reply subject: `<prefix><seq>.<op>.$FI`.
 ///
 /// `$FI` marks the subject as a fast-ingest reply to the server's parser
-/// (`server/stream.go:getFastBatch`).
-pub(crate) fn build_reply(prefix: &str, seq: u64, op: Operation) -> String {
-    format!("{prefix}{seq}.{}.$FI", op as u8)
+/// (`server/stream.go:getFastBatch`). Returns a [`Subject`] so the caller can
+/// pass it to `publish_with_reply` without an extra `String → Bytes` copy.
+pub(crate) fn build_reply(prefix: &str, seq: u64, op: Operation) -> Subject {
+    use std::fmt::Write as _;
+    // Hot path: pre-size for prefix + up to 20 digits of u64 + ".N.$FI" (6).
+    let mut s = String::with_capacity(prefix.len() + 26);
+    s.push_str(prefix);
+    write!(s, "{seq}.{}.$FI", op as u8).expect("String write is infallible");
+    // `From<String> for Subject` is zero-copy — moves the buffer into Bytes.
+    Subject::from(s)
 }
 
 /// Validate that an inbox has the shape the fast-ingest reply subject parser
@@ -973,7 +981,7 @@ impl FastPublisher {
     async fn publish_raw(
         &mut self,
         msg: OutboundMessage,
-        reply: String,
+        reply: Subject,
     ) -> Result<(), FastPublishError> {
         let OutboundMessage {
             subject,
@@ -1365,7 +1373,7 @@ mod tests {
             (Operation::Ping, 4),
         ] {
             let r = build_reply(&prefix, 42, op);
-            assert_eq!(r, format!("_INBOX.x.10.fail.42.{code}.$FI"));
+            assert_eq!(r.as_str(), format!("_INBOX.x.10.fail.42.{code}.$FI"));
         }
     }
 
@@ -1374,7 +1382,7 @@ mod tests {
         for (mode, tag) in [(GapMode::Ok, "ok"), (GapMode::Fail, "fail")] {
             let prefix = build_reply_prefix("_INBOX.abc", 25, mode);
             let r = build_reply(&prefix, 1, Operation::Start);
-            assert_eq!(r, format!("_INBOX.abc.25.{tag}.1.0.$FI"));
+            assert_eq!(r.as_str(), format!("_INBOX.abc.25.{tag}.1.0.$FI"));
         }
     }
 
