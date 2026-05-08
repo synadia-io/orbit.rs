@@ -426,31 +426,33 @@ mod fast_publish_tests {
         let (_server, js) = connect().await;
         setup_fast_stream(&js, "TEST", "test.>").await;
 
+        // `flow(1).max_outstanding_acks(1)` saturates the outstanding-ack
+        // window after a single message, so the second `add()` stalls in
+        // `wait_for_flow_event_with_pings` until the server emits *some* event.
+        // For a batch that just received a malformed first message, that event
+        // is the BatchFlowErr — which the publisher classifies, sets `fatal`,
+        // and surfaces as `FlowError` on the second `add()`. No sleep, no poll.
         let mut batch = js
             .fast_publish()
+            .flow(2)
+            .max_outstanding_acks(1)
             .ack_timeout(Duration::from_secs(5))
             .build()
             .expect("build");
 
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Expected-Last-Sequence", "99");
-        let msg = OutboundMessage {
+        let bad = OutboundMessage {
             subject: "test.bad".into(),
             payload: "x".into(),
             headers: Some(headers),
         };
-
-        // First add publishes; server emits a BatchFlowErr asynchronously on
-        // the inbox. Give the server a moment to deliver it before commit so
-        // the publisher classifies the err and sets a fatal kind, rather than
-        // commit racing with a not-yet-arrived err and timing out.
-        let _ = batch.add_message(msg).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = batch.add_message(bad).await;
 
         let err = batch
-            .commit("test.done", "done".into())
+            .add("test.next", "n".into())
             .await
-            .expect_err("commit must fail with FlowError");
+            .expect_err("second add must surface FlowError via stall gate");
         assert_eq!(
             err.kind(),
             FastPublishErrorKind::FlowError,
@@ -465,11 +467,14 @@ mod fast_publish_tests {
         let (_server, js) = connect().await;
         setup_fast_stream(&js, "TEST", "test.>").await;
 
-        // Capture the actual error kind seen by the callback so we can assert
-        // it was a FlowError, not a stray Timeout/Gap.
         let observed_kinds = Arc::new(std::sync::Mutex::new(Vec::<FastPublishErrorKind>::new()));
         let observed_cb = observed_kinds.clone();
 
+        // Default flow/max — no stall gate. In `GapMode::Ok` the publisher
+        // does not mark fatal on FlowErr, so the second `add()` runs the
+        // initial `drain_nonblocking` which classifies any pending FlowErr,
+        // fires the callback, and returns Ok. Poll a few times to absorb
+        // server-delivery latency without depending on a fixed sleep.
         let mut batch = js
             .fast_publish()
             .gap_mode(GapMode::Ok)
@@ -482,22 +487,29 @@ mod fast_publish_tests {
 
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Expected-Last-Sequence", "99");
-        let msg = OutboundMessage {
+        let bad = OutboundMessage {
             subject: "test.bad".into(),
             payload: "x".into(),
             headers: Some(headers),
         };
-        let _ = batch.add_message(msg).await;
+        let _ = batch.add_message(bad).await;
 
-        // Wait for the BatchFlowErr to land on the inbox.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Push more good messages — Ok mode should not abort.
-        for i in 0..5 {
-            let _ = batch.add("test.ok", format!("data {i}").into()).await;
+        // Issue a small bounded number of follow-up adds; each one drains the
+        // inbox and gives the BatchFlowErr a chance to be classified. We cap
+        // iterations rather than spinning until a deadline so a stuck server
+        // fails fast.
+        for _ in 0..20 {
+            if observed_kinds
+                .lock()
+                .unwrap()
+                .contains(&FastPublishErrorKind::FlowError)
+            {
+                break;
+            }
+            let _ = batch.add("test.poll", "p".into()).await;
+            tokio::task::yield_now().await;
         }
         let _ = batch.commit("test.done", "done".into()).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
 
         let kinds = observed_kinds.lock().unwrap();
         assert!(

@@ -59,6 +59,7 @@ use crate::batch_publish::BatchPubAck;
 /// A gap means one or more messages in the batch were lost in transit between
 /// the client and the stream leader (e.g. due to buffer drops under load).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum GapMode {
     /// Allow gaps — the batch continues and the server informs the client via
     /// a gap event. Use this when some message loss is acceptable (metrics,
@@ -102,18 +103,24 @@ pub type FastPublishError = async_nats::error::Error<FastPublishErrorKind>;
 /// Kinds of errors that can occur during fast-ingest batch publishing.
 ///
 /// API error codes are verified against `nats-server` 2.14 `errors.json`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Marked `#[non_exhaustive]` — adding a new variant in a future release will
+/// not be a breaking change. Match on `_` for forward compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum FastPublishErrorKind {
-    /// 10205 — stream does not have `allow_batched: true`.
+    /// Stream does not have `allow_batched: true`. (`BATCH_PUBLISH_DISABLED`, 10205)
     NotEnabled,
-    /// 10206 — reply subject pattern rejected by the server.
+    /// Reply subject pattern rejected by the server. (`BATCH_PUBLISH_INVALID_PATTERN`, 10206)
     InvalidPattern,
-    /// 10207 — batch id exceeds 64 characters or is otherwise invalid.
+    /// Batch id exceeds 64 characters or is otherwise invalid.
+    /// (`BATCH_PUBLISH_INVALID_BATCH_ID`, 10207)
     InvalidBatchId,
-    /// 10208 — server has forgotten this batch (timed out, leader change in
-    /// `GapMode::Fail`, etc.).
+    /// Server has forgotten this batch (timed out, leader change in
+    /// `GapMode::Fail`, etc.). (`BATCH_PUBLISH_UNKNOWN_BATCH_ID`, 10208)
     UnknownBatchId,
-    /// 10211 — too many in-flight fast batches on the server.
+    /// Too many in-flight fast batches on the server.
+    /// (`BATCH_PUBLISH_TOO_MANY_INFLIGHT`, 10211)
     TooManyInflight,
     /// A gap was detected while running in [`GapMode::Fail`]. The final ack
     /// will indicate which messages were persisted.
@@ -125,6 +132,9 @@ pub enum FastPublishErrorKind {
     /// `build()` rejected the inbox because it does not have exactly two
     /// tokens. The reply-subject parser requires `<prefix>.<id>` shape.
     InvalidInboxShape,
+    /// `build()` rejected a configuration value (e.g. `max_outstanding_acks`
+    /// outside `1..=3`).
+    InvalidConfig,
     /// Called a method on a publisher that has already committed, closed, or
     /// failed fatally.
     Closed,
@@ -136,8 +146,10 @@ pub enum FastPublishErrorKind {
     Publish,
     /// Failed to parse a server response.
     Serialization,
-    /// `ping()` or another operation was called in a state that does not
-    /// support it (e.g. before the first `add`).
+    /// An internal operation that depends on a runtime invariant was called
+    /// before that invariant held — currently only emitted when the publisher
+    /// would need to send a ping but no message has been published yet, so
+    /// there is no first-subject to address the ping to.
     InvalidState,
     /// Catch-all.
     Other,
@@ -145,16 +157,14 @@ pub enum FastPublishErrorKind {
 
 impl FastPublishErrorKind {
     /// Map a JetStream API error code to the matching fast-ingest error kind.
-    ///
-    /// Codes verified against `nats-server/server/errors.json` and
-    /// `server/jetstream_errors_generated.go`.
     pub(crate) fn from_api_error(error: &async_nats::jetstream::Error) -> Self {
-        match error.error_code().0 {
-            10205 => Self::NotEnabled,
-            10206 => Self::InvalidPattern,
-            10207 => Self::InvalidBatchId,
-            10208 => Self::UnknownBatchId,
-            10211 => Self::TooManyInflight,
+        use async_nats::jetstream::ErrorCode;
+        match error.error_code() {
+            ErrorCode::BATCH_PUBLISH_DISABLED => Self::NotEnabled,
+            ErrorCode::BATCH_PUBLISH_INVALID_PATTERN => Self::InvalidPattern,
+            ErrorCode::BATCH_PUBLISH_INVALID_BATCH_ID => Self::InvalidBatchId,
+            ErrorCode::BATCH_PUBLISH_UNKNOWN_BATCH_ID => Self::UnknownBatchId,
+            ErrorCode::BATCH_PUBLISH_TOO_MANY_INFLIGHT => Self::TooManyInflight,
             _ => Self::FlowError,
         }
     }
@@ -177,6 +187,7 @@ impl Display for FastPublishErrorKind {
             Self::InvalidInboxShape => {
                 write!(f, "inbox must have exactly two tokens (e.g. _INBOX.<id>)")
             }
+            Self::InvalidConfig => write!(f, "invalid fast publisher configuration"),
             Self::Closed => write!(f, "fast publisher is closed"),
             Self::Timeout => write!(f, "timeout waiting for fast batch ack"),
             Self::Subscribe => write!(f, "failed to subscribe to fast batch inbox"),
@@ -321,18 +332,11 @@ pub(crate) fn build_reply(prefix: &str, seq: u64, op: Operation) -> String {
 /// (e.g. `_INBOX.myapp.xyz`) would misalign the parser and cause cryptic
 /// `InvalidPattern` errors.
 pub(crate) fn validate_inbox_shape(inbox: &str) -> Result<(), FastPublishError> {
-    if inbox.matches('.').count() != 1 {
-        return Err(FastPublishError::new(
-            FastPublishErrorKind::InvalidInboxShape,
-        ));
-    }
-    if inbox.is_empty() {
-        return Err(FastPublishError::new(
-            FastPublishErrorKind::InvalidInboxShape,
-        ));
-    }
-    let (a, b) = inbox.split_once('.').unwrap();
-    if a.is_empty() || b.is_empty() {
+    let mut parts = inbox.splitn(3, '.');
+    let first = parts.next().unwrap_or("");
+    let second = parts.next().unwrap_or("");
+    let no_third = parts.next().is_none();
+    if first.is_empty() || second.is_empty() || !no_third {
         return Err(FastPublishError::new(
             FastPublishErrorKind::InvalidInboxShape,
         ));
@@ -536,7 +540,7 @@ impl FastPublisherBuilder {
     ///
     /// # Errors
     ///
-    /// - [`FastPublishErrorKind::InvalidState`] if `max_outstanding_acks` is
+    /// - [`FastPublishErrorKind::InvalidConfig`] if `max_outstanding_acks` is
     ///   outside `1..=3`.
     /// - [`FastPublishErrorKind::InvalidInboxShape`] if the client's
     ///   `new_inbox()` does not produce a two-token inbox (required by the
@@ -545,7 +549,7 @@ impl FastPublisherBuilder {
         if !(MIN_MAX_OUTSTANDING_ACKS..=MAX_MAX_OUTSTANDING_ACKS)
             .contains(&self.max_outstanding_acks)
         {
-            return Err(FastPublishError::new(FastPublishErrorKind::InvalidState));
+            return Err(FastPublishError::new(FastPublishErrorKind::InvalidConfig));
         }
 
         let inbox = self.client.new_inbox();
@@ -1600,6 +1604,7 @@ mod tests {
             FastPublishErrorKind::FlowError,
             FastPublishErrorKind::EmptyBatch,
             FastPublishErrorKind::InvalidInboxShape,
+            FastPublishErrorKind::InvalidConfig,
             FastPublishErrorKind::Closed,
             FastPublishErrorKind::Timeout,
             FastPublishErrorKind::Subscribe,
@@ -1644,14 +1649,14 @@ mod tests {
     async fn builder_rejects_max_outstanding_zero() {
         let (_s, b) = dummy_builder().await;
         let err = b.max_outstanding_acks(0).build().unwrap_err();
-        assert!(matches!(err.kind(), FastPublishErrorKind::InvalidState));
+        assert!(matches!(err.kind(), FastPublishErrorKind::InvalidConfig));
     }
 
     #[tokio::test]
     async fn builder_rejects_max_outstanding_four() {
         let (_s, b) = dummy_builder().await;
         let err = b.max_outstanding_acks(4).build().unwrap_err();
-        assert!(matches!(err.kind(), FastPublishErrorKind::InvalidState));
+        assert!(matches!(err.kind(), FastPublishErrorKind::InvalidConfig));
     }
 
     #[tokio::test]
