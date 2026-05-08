@@ -348,4 +348,140 @@ mod batch_publish_error_tests {
         let info = stream.info().await.unwrap();
         assert_eq!(info.state.messages, 501);
     }
+
+    #[tokio::test]
+    async fn test_is_closed_after_server_error() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let jetstream = async_nats::jetstream::new(client);
+
+        // Stream with atomic publish DISABLED — first add will fail with NotEnabled.
+        let _ = setup_test_stream(&jetstream, "test_closed", false).await;
+
+        let mut batch = jetstream.batch_publish().build();
+        assert!(!batch.is_closed());
+
+        let err = batch.add("test_closed.1", "data".into()).await.unwrap_err();
+        assert_eq!(err.kind(), BatchPublishErrorKind::BatchPublishNotEnabled);
+        assert!(batch.is_closed(), "batch must be closed after server error");
+
+        // Subsequent add must return BatchClosed, not retry.
+        let err = batch.add("test_closed.2", "data".into()).await.unwrap_err();
+        assert_eq!(err.kind(), BatchPublishErrorKind::BatchClosed);
+
+        // Commit must also return BatchClosed.
+        let err = batch
+            .commit("test_closed.3", "final".into())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), BatchPublishErrorKind::BatchClosed);
+    }
+
+    #[tokio::test]
+    async fn test_validation_errors_do_not_close() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let jetstream = async_nats::jetstream::new(client);
+
+        let _ = setup_test_stream(&jetstream, "test_no_close", true).await;
+
+        let mut batch = jetstream.batch_publish().build();
+
+        // Bad header — validation error, must not close.
+        let mut bad_headers = async_nats::HeaderMap::new();
+        bad_headers.insert("Nats-Msg-Id", "bad");
+        let bad = OutboundMessage {
+            subject: "test_no_close.1".into(),
+            payload: "x".into(),
+            headers: Some(bad_headers),
+        };
+        let err = batch.add_message(bad).await.unwrap_err();
+        assert_eq!(
+            err.kind(),
+            BatchPublishErrorKind::BatchPublishUnsupportedHeader
+        );
+        assert!(!batch.is_closed(), "validation error must not close batch");
+
+        // Recovery succeeds.
+        batch.add("test_no_close.1", "ok".into()).await.unwrap();
+        let ack = batch
+            .commit("test_no_close.2", "done".into())
+            .await
+            .unwrap();
+        assert_eq!(ack.batch_size, 2);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_headers_rejected() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let jetstream = async_nats::jetstream::new(client);
+
+        let _ = setup_test_stream(&jetstream, "test_proto_hdr", true).await;
+
+        for hdr in ["Nats-Batch-Commit", "Nats-Batch-Id", "Nats-Batch-Sequence"] {
+            let mut batch = jetstream.batch_publish().build();
+            let mut headers = async_nats::HeaderMap::new();
+            headers.insert(hdr, "anything");
+            let msg = OutboundMessage {
+                subject: "test_proto_hdr.1".into(),
+                payload: "x".into(),
+                headers: Some(headers),
+            };
+            let err = batch.add_message(msg).await.unwrap_err();
+            assert_eq!(
+                err.kind(),
+                BatchPublishErrorKind::BatchPublishUnsupportedHeader,
+                "header {hdr} must be rejected on add"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_expected_last_sequence_only_on_first() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let jetstream = async_nats::jetstream::new(client);
+
+        let _ = setup_test_stream(&jetstream, "test_els", true).await;
+
+        let mut batch = jetstream.batch_publish().build();
+
+        // First message with Nats-Expected-Last-Sequence:0 is allowed (empty stream).
+        let first = jetstream::message::PublishMessage::build()
+            .expected_last_sequence(0)
+            .outbound_message("test_els.1");
+        batch.add_message(first).await.unwrap();
+
+        // Second message with the same header must be rejected client-side.
+        let second = jetstream::message::PublishMessage::build()
+            .expected_last_sequence(0)
+            .outbound_message("test_els.2");
+        let err = batch.add_message(second).await.unwrap_err();
+        assert_eq!(
+            err.kind(),
+            BatchPublishErrorKind::BatchPublishUnsupportedHeader
+        );
+        assert!(!batch.is_closed());
+
+        // Plain add still works after the validation error.
+        batch.add("test_els.2", "ok".into()).await.unwrap();
+        let ack = batch.commit("test_els.3", "done".into()).await.unwrap();
+        assert_eq!(ack.batch_size, 3);
+    }
+
+    #[test]
+    fn test_batch_pub_ack_value_field_deserializes() {
+        use jetstream_extra::batch_publish::BatchPubAck;
+
+        // Counter stream payload: server populates `val`.
+        let with_val = r#"{"stream":"S","seq":2,"batch":"abc","count":2,"val":"42"}"#;
+        let ack: BatchPubAck = serde_json::from_str(with_val).unwrap();
+        assert_eq!(ack.value.as_deref(), Some("42"));
+
+        // Non-counter stream payload: `val` absent → field is None, not an error.
+        let without_val = r#"{"stream":"S","seq":2,"batch":"abc","count":2}"#;
+        let ack: BatchPubAck = serde_json::from_str(without_val).unwrap();
+        assert!(ack.value.is_none());
+    }
 }

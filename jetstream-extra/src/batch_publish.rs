@@ -71,6 +71,35 @@
 //! # }
 //! ```
 //!
+//! ## Per-Message Options (TTL, Expectations)
+//!
+//! Use [`async_nats::jetstream::message::PublishMessage::build`] to attach per-message
+//! TTL or stream-state expectations, then pass the result to [BatchPublish::add_message]
+//! or [BatchPublish::commit_message]:
+//!
+//! ```no_run
+//! # use jetstream_extra::batch_publish::BatchPublishExt;
+//! # use async_nats::jetstream::message::PublishMessage;
+//! # use std::time::Duration;
+//! # async fn example(client: impl BatchPublishExt) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut batch = client.batch_publish().build();
+//!
+//! // Per-ADR-50, `Nats-Expected-Last-Sequence` is allowed only on the first message.
+//! let first = PublishMessage::build()
+//!     .expected_last_sequence(0)
+//!     .outbound_message("events.1");
+//! batch.add_message(first).await?;
+//!
+//! let with_ttl = PublishMessage::build()
+//!     .ttl(Duration::from_secs(60))
+//!     .outbound_message("events.ephemeral");
+//! batch.add_message(with_ttl).await?;
+//!
+//! batch.commit("events.final", "done".into()).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Flow Control
 //!
 //! Both APIs support flow control through acknowledgments:
@@ -84,26 +113,31 @@
 //! All operations return [BatchPublishError] with specific error kinds:
 //!
 //! - `BatchPublishNotEnabled` - Stream doesn't have `allow_atomic_publish` enabled
-//! - `BatchPublishIncomplete` - Too many outstanding batches (server limit: 50)
-//! - `BatchPublishUnsupportedHeader` - Message contains `Nats-Msg-Id` or `Nats-Expected-Last-Msg-Id`
+//! - `BatchPublishIncomplete` - Batch was abandoned by the server (e.g. inactivity timeout)
+//! - `BatchPublishTooManyInflight` - Server inflight cap reached (50/stream, 1000/server)
+//! - `BatchPublishMissingSeq` - Batch sequence header missing or malformed
+//! - `BatchPublishInvalidId` - Batch ID invalid (e.g. exceeds 64 characters)
+//! - `BatchPublishInvalidCommit` - Commit marker invalid
+//! - `BatchPublishDuplicateMsgId` - Two messages in batch share `Nats-Msg-Id`
+//! - `BatchPublishMirror` - Stream is a mirror; mirrors are incompatible with atomic publish
+//! - `BatchPublishUnsupportedHeader` - Message contains an unsupported header
 //! - `MaxMessagesExceeded` - Batch exceeds 1000 message limit
 //! - `EmptyBatch` - Attempting to commit an empty batch
+//! - `BatchClosed` - Operation attempted on a batch that already failed
+//! - `InvalidAck` - Server commit ack failed invariant checks
 //!
 //! Server errors are automatically mapped to the appropriate error kind based on the error code.
 //! Errors during `add` with flow control may indicate transient issues or configuration problems.
 
 use futures_util::{Stream, StreamExt};
-use std::{
-    fmt::{Debug, Display},
-    time::Duration,
-};
+use std::{fmt::Display, time::Duration};
 
 use async_nats::{
     Request, client,
     jetstream::{self, message::OutboundMessage, response::Response},
     subject::ToSubject,
 };
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::Deserialize;
 
 /// Maximum number of messages allowed in a single batch (server limit)
 const MAX_BATCH_SIZE: u64 = 1000;
@@ -189,17 +223,19 @@ where
             ack_every: self.ack_every,
             ack_first: self.ack_first,
             timeout: self.timeout,
+            closed: false,
         }
     }
 }
 
 pub struct BatchPublish<C> {
-    pub context: C,
-    pub sequence: u64,
-    pub batch_id: String,
+    pub(crate) context: C,
+    pub(crate) sequence: u64,
+    pub(crate) batch_id: String,
     ack_every: Option<u64>,
     ack_first: bool,
     timeout: Duration,
+    closed: bool,
 }
 
 impl<C> BatchPublish<C>
@@ -209,15 +245,9 @@ where
         + jetstream::context::traits::TimeoutProvider
         + Clone,
 {
-    pub fn new(context: C, sequence: u64, batch_id: String) -> Self {
-        Self {
-            sequence,
-            batch_id,
-            timeout: context.timeout(),
-            context,
-            ack_first: true,
-            ack_every: None,
-        }
+    /// Returns the unique batch identifier (used in `Nats-Batch-Id` headers).
+    pub fn batch_id(&self) -> &str {
+        &self.batch_id
     }
 
     /// Get the current number of messages in the batch.
@@ -298,38 +328,47 @@ where
         &mut self,
         mut message: jetstream::message::OutboundMessage,
     ) -> Result<(), BatchPublishError> {
-        // Check for unsupported headers
-        if let Some(headers) = &message.headers
-            && (headers.get("Nats-Msg-Id").is_some()
-                || headers.get("Nats-Expected-Last-Msg-Id").is_some())
-        {
-            return Err(BatchPublishError::new(
-                BatchPublishErrorKind::BatchPublishUnsupportedHeader,
-            ));
+        if self.closed {
+            return Err(BatchPublishError::new(BatchPublishErrorKind::BatchClosed));
         }
+        // Validation errors do not close the batch — they leave server state untouched
+        // and the caller may retry with a corrected message.
+        Self::reject_protocol_headers(message.headers.as_ref(), self.sequence)?;
 
-        self.sequence += 1;
-
-        if self.sequence > MAX_BATCH_SIZE {
+        if self.sequence >= MAX_BATCH_SIZE {
             return Err(BatchPublishError::new(
                 BatchPublishErrorKind::MaxMessagesExceeded,
             ));
         }
+
+        self.sequence += 1;
         self.add_header(&mut message);
 
-        if let Some(ack_every) = self.ack_every
+        let result = if let Some(ack_every) = self.ack_every
             && self.sequence.is_multiple_of(ack_every)
         {
-            self.add_request(message).await?;
+            self.add_request(message).await
         } else if self.ack_first && self.sequence == 1 {
-            self.add_request(message).await?;
+            self.add_request(message).await
         } else {
             self.context
                 .publish_message(message.into())
                 .await
-                .map_err(|e| BatchPublishError::with_source(BatchPublishErrorKind::Publish, e))?;
+                .map_err(|e| BatchPublishError::with_source(BatchPublishErrorKind::Publish, e))
+        };
+
+        if let Err(e) = result {
+            self.closed = true;
+            return Err(e);
         }
         Ok(())
+    }
+
+    /// Returns `true` if the batch has been closed by an error and can no longer be used.
+    ///
+    /// Once closed, all subsequent `add` / `commit` calls return [BatchPublishErrorKind::BatchClosed].
+    pub fn is_closed(&self) -> bool {
+        self.closed
     }
 
     /// Commit the batch with a final message.
@@ -393,24 +432,18 @@ where
         mut self,
         mut message: jetstream::message::OutboundMessage,
     ) -> Result<BatchPubAck, BatchPublishError> {
-        // Check for unsupported headers
-        if let Some(headers) = &message.headers
-            && (headers.get("Nats-Msg-Id").is_some()
-                || headers.get("Nats-Expected-Last-Msg-Id").is_some())
-        {
-            return Err(BatchPublishError::new(
-                BatchPublishErrorKind::BatchPublishUnsupportedHeader,
-            ));
+        if self.closed {
+            return Err(BatchPublishError::new(BatchPublishErrorKind::BatchClosed));
         }
+        Self::reject_protocol_headers(message.headers.as_ref(), self.sequence)?;
 
-        self.sequence += 1;
-
-        if self.sequence > MAX_BATCH_SIZE {
+        if self.sequence >= MAX_BATCH_SIZE {
             return Err(BatchPublishError::new(
                 BatchPublishErrorKind::MaxMessagesExceeded,
             ));
         }
 
+        self.sequence += 1;
         self.add_header(&mut message);
         // Headers are guaranteed to exist after add_header
         let headers = message
@@ -419,6 +452,37 @@ where
         headers.insert("Nats-Batch-Commit", "1");
 
         self.commit_request(message).await
+    }
+
+    /// Reject protocol headers the user must not set. Per ADR-50,
+    /// `Nats-Expected-Last-Sequence` is allowed only on the first message;
+    /// `prior_sequence` is the publisher's `self.sequence` *before* incrementing
+    /// for the message being validated (i.e. 0 for the first message).
+    fn reject_protocol_headers(
+        headers: Option<&async_nats::HeaderMap>,
+        prior_sequence: u64,
+    ) -> Result<(), BatchPublishError> {
+        let Some(headers) = headers else {
+            return Ok(());
+        };
+        const REJECTED: &[&str] = &[
+            "Nats-Msg-Id",
+            "Nats-Expected-Last-Msg-Id",
+            "Nats-Batch-Commit",
+            "Nats-Batch-Id",
+            "Nats-Batch-Sequence",
+        ];
+        if REJECTED.iter().any(|h| headers.get(*h).is_some()) {
+            return Err(BatchPublishError::new(
+                BatchPublishErrorKind::BatchPublishUnsupportedHeader,
+            ));
+        }
+        if prior_sequence >= 1 && headers.get("Nats-Expected-Last-Sequence").is_some() {
+            return Err(BatchPublishError::new(
+                BatchPublishErrorKind::BatchPublishUnsupportedHeader,
+            ));
+        }
+        Ok(())
     }
 
     /// Discard the batch without committing.
@@ -481,10 +545,10 @@ where
         }
     }
 
-    async fn commit_request<T: DeserializeOwned + Debug>(
+    async fn commit_request(
         &self,
         message: OutboundMessage,
-    ) -> Result<T, BatchPublishError> {
+    ) -> Result<BatchPubAck, BatchPublishError> {
         let request = Request {
             payload: Some(message.payload),
             headers: message.headers,
@@ -497,7 +561,7 @@ where
             .await
             .map_err(|e| BatchPublishError::with_source(BatchPublishErrorKind::Request, e))?;
 
-        let resp: Response<T> = serde_json::from_slice(response.payload.as_ref())
+        let resp: Response<BatchPubAck> = serde_json::from_slice(response.payload.as_ref())
             .map_err(|e| BatchPublishError::with_source(BatchPublishErrorKind::Serialization, e))?;
 
         match resp {
@@ -505,7 +569,15 @@ where
                 let kind = BatchPublishErrorKind::from_api_error(&error);
                 Err(BatchPublishError::with_source(kind, error))
             }
-            Response::Ok(ack) => Ok(ack),
+            Response::Ok(ack) => {
+                if ack.stream.is_empty()
+                    || ack.batch_id != self.batch_id
+                    || ack.batch_size != self.sequence
+                {
+                    return Err(BatchPublishError::new(BatchPublishErrorKind::InvalidAck));
+                }
+                Ok(ack)
+            }
         }
     }
 }
@@ -530,6 +602,10 @@ pub struct BatchPubAck {
     /// The number of messages in the committed batch.
     #[serde(rename = "count")]
     pub batch_size: u64,
+    /// The counter value, when the batch was published to a counter stream
+    /// (`AllowMsgCounter` enabled).
+    #[serde(default, rename = "val")]
+    pub value: Option<String>,
 }
 
 /// Builder for bulk publishing multiple messages at once
@@ -820,6 +896,7 @@ where
             ack_every: self.ack_every,
             ack_first: self.ack_first,
             timeout: self.timeout,
+            closed: false,
         };
 
         // Buffer one message to identify the last
@@ -843,8 +920,12 @@ where
 /// Error type for batch publish operations
 pub type BatchPublishError = async_nats::error::Error<BatchPublishErrorKind>;
 
-/// Kinds of errors that can occur during batch publish operations
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Kinds of errors that can occur during batch publish operations.
+///
+/// Marked `#[non_exhaustive]` — adding a new variant in a future release will
+/// not be a breaking change. Match on `_` for forward compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BatchPublishErrorKind {
     /// Failed to send request to the server
     Request,
@@ -852,19 +933,32 @@ pub enum BatchPublishErrorKind {
     Publish,
     /// Failed to serialize or deserialize data
     Serialization,
-    /// Batch is in an invalid state for the operation
-    BatchFull,
     /// Exceeded maximum allowed messages in batch (server limit: 1000)
     MaxMessagesExceeded,
     /// Empty batch cannot be committed
     EmptyBatch,
+    /// Batch was closed by a prior error and can no longer be used
+    BatchClosed,
+    /// Server commit ack failed invariant checks (mismatched batch id, count, or empty stream)
+    InvalidAck,
     /// Batch publishing is not enabled on the stream (allow_atomic_publish must be true)
     BatchPublishNotEnabled,
     /// Batch publish is incomplete and was abandoned
     BatchPublishIncomplete,
-    /// Server has too many inflight batches (server limit: 50)
+    /// Server has too many inflight batches (50 per stream, 1000 server-wide)
     BatchPublishTooManyInflight,
-    /// Batch uses unsupported headers (Nats-Msg-Id or Nats-Expected-Last-Msg-Id)
+    /// Batch sequence header missing or malformed
+    BatchPublishMissingSeq,
+    /// Batch ID is invalid (e.g. exceeds 64 characters)
+    BatchPublishInvalidId,
+    /// Batch commit marker is invalid
+    BatchPublishInvalidCommit,
+    /// Two messages in the batch share the same `Nats-Msg-Id`
+    BatchPublishDuplicateMsgId,
+    /// Stream is a mirror; mirrors are incompatible with atomic publish
+    BatchPublishMirror,
+    /// Batch uses unsupported headers (e.g. `Nats-Msg-Id`, `Nats-Expected-Last-Msg-Id`,
+    /// or protocol headers set by the user)
     BatchPublishUnsupportedHeader,
     /// Other unspecified error
     Other,
@@ -880,6 +974,13 @@ impl BatchPublishErrorKind {
             ErrorCode::ATOMIC_PUBLISH_TOO_MANY_INFLIGHT => Self::BatchPublishTooManyInflight,
             ErrorCode::ATOMIC_PUBLISH_UNSUPPORTED_HEADER => Self::BatchPublishUnsupportedHeader,
             ErrorCode::ATOMIC_PUBLISH_TOO_LARGE_BATCH => Self::MaxMessagesExceeded,
+            ErrorCode::ATOMIC_PUBLISH_MISSING_SEQ => Self::BatchPublishMissingSeq,
+            ErrorCode::ATOMIC_PUBLISH_INVALID_BATCH_ID => Self::BatchPublishInvalidId,
+            ErrorCode::ATOMIC_PUBLISH_INVALID_BATCH_COMMIT => Self::BatchPublishInvalidCommit,
+            ErrorCode::ATOMIC_PUBLISH_CONTAINS_DUPLICATE_MESSAGE => {
+                Self::BatchPublishDuplicateMsgId
+            }
+            ErrorCode::MIRROR_WITH_ATOMIC_PUBLISH => Self::BatchPublishMirror,
             _ => Self::Other,
         }
     }
@@ -891,7 +992,6 @@ impl Display for BatchPublishErrorKind {
             Self::Request => write!(f, "request failed"),
             Self::Publish => write!(f, "publish failed"),
             Self::Serialization => write!(f, "serialization/deserialization error"),
-            Self::BatchFull => write!(f, "batch is full"),
             Self::MaxMessagesExceeded => write!(f, "batch exceeds server limit (1000 messages)"),
             Self::EmptyBatch => write!(f, "empty batch cannot be committed"),
             Self::BatchPublishNotEnabled => write!(f, "batch publishing not enabled on stream"),
@@ -899,12 +999,33 @@ impl Display for BatchPublishErrorKind {
                 write!(f, "batch publish is incomplete and was abandoned")
             }
             Self::BatchPublishTooManyInflight => {
-                write!(f, "server has too many inflight batches (limit: 50)")
+                write!(
+                    f,
+                    "server has too many inflight batches (50 per stream, 1000 server-wide)"
+                )
             }
+            Self::BatchPublishMissingSeq => {
+                write!(f, "batch sequence header missing or malformed")
+            }
+            Self::BatchPublishInvalidId => {
+                write!(f, "batch id is invalid (e.g. exceeds 64 characters)")
+            }
+            Self::BatchPublishInvalidCommit => write!(f, "batch commit marker is invalid"),
+            Self::BatchPublishDuplicateMsgId => {
+                write!(f, "two messages in the batch share the same Nats-Msg-Id")
+            }
+            Self::BatchPublishMirror => write!(
+                f,
+                "stream is a mirror; mirrors are incompatible with atomic publish"
+            ),
             Self::BatchPublishUnsupportedHeader => write!(
                 f,
-                "batch uses unsupported headers (Nats-Msg-Id or Nats-Expected-Last-Msg-Id)"
+                "batch contains an unsupported header (e.g. Nats-Msg-Id, Nats-Expected-Last-Msg-Id, or a protocol header set by the user)"
             ),
+            Self::BatchClosed => {
+                write!(f, "batch was closed by a prior error and cannot be reused")
+            }
+            Self::InvalidAck => write!(f, "server commit ack failed invariant checks"),
             Self::Other => write!(f, "other error"),
         }
     }
