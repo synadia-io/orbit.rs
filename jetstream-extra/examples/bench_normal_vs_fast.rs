@@ -82,7 +82,10 @@ fn print_row(label: &str, s: Stats) {
     let secs = s.elapsed.as_secs_f64();
     let msgs_per_sec = TOTAL as f64 / secs;
     let mb_per_sec = (TOTAL as f64 * PAYLOAD.len() as f64) / secs / 1_048_576.0;
-    println!("{label}  {:>8.3}s  {:>8.0}  {:>6.2}", secs, msgs_per_sec, mb_per_sec);
+    println!(
+        "{label}  {:>8.3}s  {:>8.0}  {:>6.2}",
+        secs, msgs_per_sec, mb_per_sec
+    );
 }
 
 fn payload() -> Bytes {
@@ -154,9 +157,7 @@ async fn bench_async(js: &jetstream::Context) -> Result<Stats, Box<dyn std::erro
 /// run. The stream still captures every message because subjects match — JS
 /// captures whatever lands on its subjects regardless of who published it.
 /// orbit.go reports this as the fastest path; useful as an upper bound.
-async fn bench_core_then_js(
-    js: &jetstream::Context,
-) -> Result<Stats, Box<dyn std::error::Error>> {
+async fn bench_core_then_js(js: &jetstream::Context) -> Result<Stats, Box<dyn std::error::Error>> {
     println!("\n[core+js] R1 stream, core publish first N-1 + js.publish last");
     create_stream(js, "BENCH_CORE", "bench.core").await?;
     let nc = js.clone();
@@ -208,7 +209,11 @@ async fn bench_atomic(js: &jetstream::Context) -> Result<Stats, Box<dyn std::err
 
     let info = js.get_stream("BENCH_ATOMIC").await?.get_info().await?;
     assert_eq!(info.state.messages as usize, TOTAL);
-    println!("[atomic] done in {:.3}s ({} batches of {BATCH})", elapsed.as_secs_f64(), TOTAL / BATCH);
+    println!(
+        "[atomic] done in {:.3}s ({} batches of {BATCH})",
+        elapsed.as_secs_f64(),
+        TOTAL / BATCH
+    );
     Ok(Stats { elapsed })
 }
 
@@ -246,6 +251,10 @@ async fn bench_fast(js: &jetstream::Context) -> Result<Stats, Box<dyn std::error
     assert_eq!(pub_ack.batch_size as usize, TOTAL);
     let info = js.get_stream("BENCH_FAST").await?.get_info().await?;
     assert_eq!(info.state.messages as usize, TOTAL);
-    println!("[fast] done in {:.3}s (batch_id={})", elapsed.as_secs_f64(), pub_ack.batch_id);
+    println!(
+        "[fast] done in {:.3}s (batch_id={})",
+        elapsed.as_secs_f64(),
+        pub_ack.batch_id
+    );
     Ok(Stats { elapsed })
 }

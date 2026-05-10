@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     median, p_min, p_max
                 );
 
-                if best.map_or(true, |(_, _, m)| median > m) {
+                if best.is_none_or(|(_, _, m)| median > m) {
                     best = Some((flow, max_acks, median));
                 }
             }
@@ -150,9 +150,10 @@ async fn run_once(
     let payload = || Bytes::from_static(payload_bytes);
     let started = Instant::now();
     for i in 0..(TOTAL - 1) {
-        batch.add(subject.clone(), payload()).await.map_err(|e| {
-            format!("add {i} failed (flow={flow}, max={max_acks}): {e:?}")
-        })?;
+        batch
+            .add(subject.clone(), payload())
+            .await
+            .map_err(|e| format!("add {i} failed (flow={flow}, max={max_acks}): {e:?}"))?;
     }
     let pub_ack = batch
         .commit(subject.clone(), payload())

@@ -41,8 +41,8 @@ use std::{
     time::Duration,
 };
 
-use async_nats::jetstream::message::OutboundMessage;
 use async_nats::Subject;
+use async_nats::jetstream::message::OutboundMessage;
 use async_nats::subject::ToSubject;
 use bytes::Bytes;
 use futures::StreamExt;
@@ -50,10 +50,6 @@ use futures::task::noop_waker_ref;
 use serde::Deserialize;
 
 use crate::batch_publish::BatchPubAck;
-
-// ---------------------------------------------------------------------------
-// Public enums
-// ---------------------------------------------------------------------------
 
 /// How the server should handle gaps in the batch sequence.
 ///
@@ -93,10 +89,6 @@ pub(crate) enum Operation {
     CommitEob = 3,
     Ping = 4,
 }
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
 
 /// Error type for fast-ingest batch publish operations.
 pub type FastPublishError = async_nats::error::Error<FastPublishErrorKind>;
@@ -202,10 +194,6 @@ impl Display for FastPublishErrorKind {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wire protocol structs (server → client)
-// ---------------------------------------------------------------------------
-
 /// Flow-control message sent by the server when a batch of messages has been
 /// persisted. Wire tag: `"type":"ack"`.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -301,10 +289,6 @@ pub(crate) fn classify(payload: &[u8]) -> Result<Classified, FastPublishError> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Reply subject construction
-// ---------------------------------------------------------------------------
-
 /// Build the stable prefix of the reply subject:
 /// `<inbox>.<flow>.<gap>.`
 ///
@@ -352,10 +336,6 @@ pub(crate) fn validate_inbox_shape(inbox: &str) -> Result<(), FastPublishError> 
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Stall formula
-// ---------------------------------------------------------------------------
-
 /// Decide whether the publisher should stall before sending the next message.
 ///
 /// Matches the canonical ADR-50 / orbit.go form: wait iff
@@ -388,10 +368,6 @@ pub(crate) fn should_stall(
     window <= next_sequence
 }
 
-// ---------------------------------------------------------------------------
-// Builder knobs
-// ---------------------------------------------------------------------------
-
 /// Default initial flow (ack-every-N) requested from the server.
 pub(crate) const DEFAULT_FLOW: u16 = 100;
 
@@ -403,10 +379,6 @@ pub(crate) const MIN_MAX_OUTSTANDING_ACKS: u16 = 1;
 
 /// Maximum allowed value for `max_outstanding_acks` (ADR-50 recommends 1..=3).
 pub(crate) const MAX_MAX_OUTSTANDING_ACKS: u16 = 3;
-
-// ---------------------------------------------------------------------------
-// Extension trait
-// ---------------------------------------------------------------------------
 
 /// Extension trait adding [`fast_publish`](FastPublishExt::fast_publish) to any
 /// JetStream-context-like type.
@@ -441,10 +413,6 @@ impl<T> FastPublishExt for T where
         + async_nats::jetstream::context::traits::TimeoutProvider
 {
 }
-
-// ---------------------------------------------------------------------------
-// Builder
-// ---------------------------------------------------------------------------
 
 /// Callback type for asynchronous fast-publish errors (gaps, flow errors,
 /// per-message server errors). Invoked synchronously on the publisher's task
@@ -586,10 +554,6 @@ impl FastPublisherBuilder {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// FastPublisher
-// ---------------------------------------------------------------------------
 
 /// A non-atomic, high-throughput JetStream batch publisher using the
 /// fast-ingest protocol (ADR-50, nats-server 2.14+).
