@@ -14,7 +14,7 @@ categories = ["network-programming", "api-bindings"]
 [dependencies]
 async-nats = "0.48.0"
 futures-util = "0.3"
-jetstream-extra = { version = "0.2.1", path = "../jetstream-extra" }
+jetstream-extra = { version = "0.3.0", path = "../jetstream-extra" }
 num-bigint = "0.4.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
