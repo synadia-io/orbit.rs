@@ -1,0 +1,23 @@
+[package]
+name = "kv-codec"
+version = "0.1.0"
+edition = "2024"
+authors = ["Tomasz Pietrek <tomasz@synadia.com>"]
+description = "Transparent key and value encoding for NATS JetStream Key-Value stores (ADR-54)"
+license = "Apache-2.0"
+rust-version = "1.85"
+documentation = "https://docs.rs/kv-codec"
+homepage = "https://github.com/synadia-io/orbit.rs"
+repository = "https://github.com/synadia-io/orbit.rs"
+keywords = ["nats", "extensions", "api", "jetstream", "kv"]
+categories = ["network-programming", "api-bindings"]
+
+[dependencies]
+async-nats = "0.48.0"
+base64 = "0.22"
+bytes = "1"
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
+nats_server = { git = "https://github.com/nats-io/nats.rs", package = "nats-server" }
