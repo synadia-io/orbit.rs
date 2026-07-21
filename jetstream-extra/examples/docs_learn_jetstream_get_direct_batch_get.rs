@@ -42,6 +42,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
 
+    // Seed a few orders so the batch read below has messages to return.
+    for sku in ["NATS-TEE", "NATS-MUG", "NATS-CAP"] {
+        js.publish("orders.created", format!(r#"{{"sku":"{sku}"}}"#).into())
+            .await?
+            .await?;
+    }
+
     // NATS-DOC-START
     // Fetch up to 3 messages starting at stream sequence 1, all in one request.
     let mut messages = js.get_batch("ORDERS", 3).sequence(1).send().await?;
