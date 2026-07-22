@@ -16,3 +16,4 @@ This is a list of the current utilities.
 | nats extra        | Set of useful tools for Core NATS | [README.md](nats-extra/README.md) | [![Crates.io](https://img.shields.io/crates/v/nats-extra.svg)](https://crates.io/crates/nats-extra) |
 | jetstream extra   | Set of useful tools for NATS JetStream | [README.md](jetstream-extra/README.md) | [![Crates.io](https://img.shields.io/crates/v/jetstream-extra.svg)](https://crates.io/crates/jetstream-extra) |
 | nats counters     | Distributed counters using JetStream | [README.md](nats-counters/README.md) | [![Crates.io](https://img.shields.io/crates/v/nats-counters.svg)](https://crates.io/crates/nats-counters) |
+| kv codec          | Transparent key/value encoding for JetStream KV | [README.md](kv-codec/README.md) | [![Crates.io](https://img.shields.io/crates/v/kv-codec.svg)](https://crates.io/crates/kv-codec) |
